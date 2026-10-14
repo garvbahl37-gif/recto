@@ -102,3 +102,32 @@ def test_fetches_are_rate_limited_across_the_service(env):
         knowledge.fetch_for_question(q, r, s2, emit=lambda st, **p: events.append((st, p)))
     assert fetched == ["KO", "PEP"], fetched
     assert any(st == "fetch_failed" and "limit" in p["message"].lower() for st, p in events)
+
+
+def test_a_failed_fetch_gives_its_allowance_back(env, monkeypatch):
+    """A fetch that fails (no annual report, EDGAR down) must not use up the
+    shared allowance, or a handful of bad requests locks everyone out."""
+    s, r, fetched = env
+    s2 = replace(s, max_fetched=50, fetch_rate=1)
+    knowledge._FETCH_TIMES.clear()
+
+    def broken(*a, **k):
+        raise ValueError("no annual report on EDGAR")
+    monkeypatch.setattr(knowledge, "ingest_ticker", broken)
+    knowledge.fetch_for_question("What was Coca-Cola's revenue?", r, s2)
+    assert knowledge._FETCH_TIMES == [], "the failed fetch kept its slot"
+
+
+def test_ingest_endpoint_rejects_unknown_tickers_without_spending_a_slot(monkeypatch):
+    from fastapi.testclient import TestClient
+    from insightledger.api.main import app
+    from insightledger.ingestion.edgar import EdgarClient
+
+    def fake_load(self):                      # the cached ticker list, no network
+        self._tickers = {"AAPL": 320193}
+        return [{"ticker": "AAPL", "title": "Apple Inc.", "cik": 320193}]
+    monkeypatch.setattr(EdgarClient, "_load_companies", fake_load)
+    knowledge._FETCH_TIMES.clear()
+    r = TestClient(app).post("/ingest", json={"ticker": "ZZZZNOTREAL"})
+    assert r.status_code in (400, 404, 502)
+    assert knowledge._FETCH_TIMES == []

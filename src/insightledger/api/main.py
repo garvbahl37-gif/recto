@@ -191,8 +191,19 @@ def ingest(req: IngestRequest) -> dict:
     """Fetch + index a live SEC EDGAR filing on demand — the latest of a form,
     or one specific filing when an accession is supplied (company browser)."""
     tk = req.ticker.strip().upper()
-    from ..knowledge import reserve_fetch
-    refusal = reserve_fetch()
+    from ..ingestion import EdgarClient
+    from ..knowledge import release_fetch, reserve_fetch
+
+    # Check the company exists before spending from the shared allowance (the
+    # ticker list is cached, so this costs no request to EDGAR); otherwise a
+    # few made-up tickers would lock everyone out of fetching.
+    try:
+        EdgarClient(get_settings()).resolve_cik(tk)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"EDGAR company list unavailable: {exc}")
+    refusal, slot = reserve_fetch()
     if refusal:
         raise HTTPException(429, refusal)
     try:
@@ -202,6 +213,7 @@ def ingest(req: IngestRequest) -> dict:
         else:
             doc = ingest_ticker(tk, form=req.form, retriever=_orchestrator().retriever)
     except Exception as exc:  # noqa: BLE001
+        release_fetch(slot)
         raise HTTPException(502, f"EDGAR ingest failed: {exc}")
     return {"doc_id": doc.doc_id, "title": doc.title, "pages": len(doc.pages),
             "source": doc.source, "sections": sorted(

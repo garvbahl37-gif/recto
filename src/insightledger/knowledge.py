@@ -70,12 +70,13 @@ _FETCH_TIMES: list[float] = []          # when each recent EDGAR fetch started
 _FETCH_WINDOW = 600.0                    # seconds
 
 
-def reserve_fetch(settings: Optional[Settings] = None) -> Optional[str]:
+def reserve_fetch(settings: Optional[Settings] = None) -> tuple[Optional[str], Optional[float]]:
     """Claim one EDGAR fetch from the service-wide allowance.
 
-    Returns None when the fetch may go ahead, or the reason it may not. Every
-    path that pulls a filing from EDGAR on a visitor's behalf goes through
-    here, so no visitor can make the server hammer the SEC or fill its memory.
+    Returns (refusal, slot): refusal is None when the fetch may go ahead, and
+    slot must be handed to release_fetch() if the fetch then fails, so a bad
+    request cannot spend the allowance everyone shares. Every path that pulls
+    a filing from EDGAR on a visitor's behalf goes through here.
     """
     s = settings or get_settings()
     now = time.time()
@@ -84,9 +85,20 @@ def reserve_fetch(settings: Optional[Settings] = None) -> Optional[str]:
         if len(_FETCH_TIMES) >= max(0, s.fetch_rate):
             wait = int(_FETCH_WINDOW - (now - _FETCH_TIMES[0])) + 1
             return (f"Fetch limit reached: {s.fetch_rate} filings per ten minutes "
-                    f"across the service. Try again in about {max(1, wait // 60)} min.")
+                    f"across the service. Try again in about {max(1, wait // 60)} min."), None
         _FETCH_TIMES.append(now)
-    return None
+    return None, now
+
+
+def release_fetch(slot: Optional[float]) -> None:
+    """Give back a slot whose fetch failed."""
+    if slot is None:
+        return
+    with _FETCH_LOCK:
+        try:
+            _FETCH_TIMES.remove(slot)
+        except ValueError:
+            pass
 _FORM = re.compile(r"-(10-K|10-Q|8-K|20-F|40-F|DEF 14A)-\d{4}-\d{2}-\d{2}$")
 
 
@@ -147,7 +159,7 @@ def fetch_for_question(question: str, retriever: Retriever,
             if have:
                 out += have
                 continue
-            refusal = reserve_fetch(s)
+            refusal, slot = reserve_fetch(s)
             if refusal:
                 say("fetch_failed", ticker=tk, company=name, message=refusal)
                 continue
@@ -156,6 +168,7 @@ def fetch_for_question(question: str, retriever: Retriever,
             try:
                 doc = ingest_ticker(tk, settings=s, retriever=retriever)
             except Exception as exc:  # noqa: BLE001
+                release_fetch(slot)
                 say("fetch_failed", ticker=tk, company=name, message=str(exc)[:240])
                 continue
             say("fetched", ticker=tk, company=name, doc_id=doc.doc_id, form=doc.doc_type,
