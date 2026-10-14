@@ -8,9 +8,13 @@ import json
 
 from fastapi.testclient import TestClient
 
-from insightledger.api.main import app
+from insightledger.api.main import _orchestrator, app
 
 client = TestClient(app)
+
+
+def setup_module():
+    _orchestrator()             # builds the index these endpoints read, in any test order
 
 
 def test_single_page_has_its_text_and_place_in_the_filing():
@@ -57,3 +61,9 @@ def test_registry_is_read_once_until_the_file_changes():
     from insightledger import knowledge
     first = knowledge.load_registry()
     assert knowledge.load_registry() is first      # cached object, not a re-parse
+
+
+def test_requests_too_large_to_answer_are_rejected_before_any_work():
+    assert client.post("/query", json={"question": "x" * 2001}).status_code == 422
+    assert client.post("/query", json={"question": "revenue?", "top_k": 500}).status_code == 422
+    assert client.post("/query/stream", json={"question": "x" * 2001}).status_code == 422

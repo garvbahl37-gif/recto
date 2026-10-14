@@ -16,7 +16,7 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..agents import Orchestrator
 from ..config import get_settings
@@ -44,9 +44,11 @@ def _orchestrator() -> Orchestrator:
 
 
 class QueryRequest(BaseModel):
-    question: str
-    top_k: Optional[int] = None
-    doc_ids: Optional[list[str]] = None
+    # A question is a sentence or two; the caps keep one request from reading
+    # every page on the shelf or filling the model's context.
+    question: str = Field(max_length=2000)
+    top_k: Optional[int] = Field(default=None, ge=1, le=20)
+    doc_ids: Optional[list[str]] = Field(default=None, max_length=50)
 
 
 class IngestRequest(BaseModel):

@@ -12,6 +12,7 @@ data/cache/
 data/filings/
 data/index/
 data/traces/
+data/_eval/
 data/samples/*.pdf
 *.log
 .DS_Store
