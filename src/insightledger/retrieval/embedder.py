@@ -29,6 +29,22 @@ _DIM = 64
 _TOK = re.compile(r"[A-Za-z0-9%$.\-]+")
 
 
+def _lemma(tok: str) -> str:
+    """A word's singular: "revenues" and "revenue" must be the same token, or a
+    question in the plural never finds GE's "Total revenue $ 45,855"."""
+    if not tok.isalpha() or len(tok) <= 3:
+        return tok
+    if len(tok) > 4 and tok.endswith("ies"):
+        return tok[:-3] + "y"                               # liabilities
+    if tok.endswith("ss") or tok.endswith(("us", "is")):
+        return tok                                          # loss, status, basis
+    if tok.endswith("es") and tok[:-2].endswith(("ss", "x", "ch", "sh")):
+        return tok[:-2]                                     # losses, taxes
+    if tok.endswith("s"):
+        return tok[:-1]                                     # revenues, sales
+    return tok
+
+
 def best_per_token(query: np.ndarray, doc: np.ndarray) -> np.ndarray:
     """For each query token, its best similarity to any document token (Tq,)."""
     if query.size == 0 or doc.size == 0:
@@ -86,12 +102,15 @@ def _hash_vec(token: str, dim: int) -> np.ndarray:
 class StubEmbedder:
     name = "stub"
     dim = _DIM
+    # How page vectors are made. An index built another way is discarded on
+    # load and rebuilt, rather than silently scored against different tokens.
+    scheme = "stub-singular"
 
     def __init__(self) -> None:
         self._cache: dict[str, np.ndarray] = {}
 
     def _tokens(self, text: str) -> list[str]:
-        return [t.lower() for t in _TOK.findall(text)]
+        return [_lemma(t.lower()) for t in _TOK.findall(text)]
 
     @staticmethod
     def _unique(tokens: list[str]) -> list[str]:

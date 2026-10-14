@@ -16,7 +16,8 @@ class Indexer:
                  settings: Optional[Settings] = None):
         self.s = settings or get_settings()
         self.embedder = embedder or get_embedder(self.s)
-        self.store = store or get_store(self.s, dim=getattr(self.embedder, "dim", 128))
+        self.store = store or get_store(self.s, dim=getattr(self.embedder, "dim", 128),
+                                         scheme=getattr(self.embedder, "scheme", ""))
 
     @staticmethod
     def _key(doc_id: str, page_number: int) -> str:

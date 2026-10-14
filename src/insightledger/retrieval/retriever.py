@@ -21,7 +21,8 @@ class Retriever:
                  settings: Optional[Settings] = None):
         self.s = settings or get_settings()
         self.embedder = embedder or get_embedder(self.s)
-        self.store = store or get_store(self.s, dim=getattr(self.embedder, "dim", 128))
+        self.store = store or get_store(self.s, dim=getattr(self.embedder, "dim", 128),
+                                         scheme=getattr(self.embedder, "scheme", ""))
 
     def retrieve(self, query: Query, tracer: Optional[Tracer] = None) -> list[RetrievedPage]:
         qv = self.embedder.embed_query(query.text)

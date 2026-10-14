@@ -74,9 +74,27 @@ def question_phrases(question: str, entity_terms: frozenset = frozenset()) -> li
     return sorted(set(out), key=lambda p: (-len(p.split()), p))
 
 
+def _forms(word: str) -> str:
+    """A label word as a pattern for both its singular and plural: questions
+    ask for "total revenues" where GE prints "Total revenue $ 45,855"."""
+    if word in _INNER:
+        return re.escape(word)
+    if len(word) > 4 and word.endswith("ies"):
+        return re.escape(word[:-3]) + "(?:y|ies)"           # liabilities
+    if len(word) > 2 and word.endswith("y") and word[-2] not in "aeiou":
+        return re.escape(word[:-1]) + "(?:y|ies)"           # inventory
+    if word.endswith("ss"):
+        return re.escape(word) + "(?:es)?"                  # loss, gross
+    if len(word) > 3 and word.endswith("es") and word[:-2].endswith(("ss", "x", "ch", "sh")):
+        return re.escape(word[:-2]) + "(?:es)?"             # losses, taxes
+    if len(word) > 3 and word.endswith("s"):
+        return re.escape(word[:-1]) + "s?"                  # revenues, sales
+    return re.escape(word) + "s?"                           # revenue
+
+
 @lru_cache(maxsize=256)
 def _pattern(phrase: str) -> re.Pattern:
-    words = [re.escape(w) for w in phrase.split()]
+    words = [_forms(w) for w in phrase.split()]
     # the label, flexible about spacing, then up to 30 non-figure characters
     # (a footnote marker, "(1)", a currency word) before the first figure
     label = r"\s+".join(words)

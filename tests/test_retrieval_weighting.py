@@ -68,3 +68,13 @@ def test_company_names_do_not_glue_onto_labels():
     assert question_phrases("What was Apple's total net sales?") == ["net sales"]
     assert question_phrases("How much did Tesla spend on research and development?")[0] \
         == "research and development"
+
+
+def test_a_line_item_matches_whether_the_question_says_singular_or_plural():
+    from insightledger.retrieval.lineitems import line_item_hits
+    assert line_item_hits("Total revenue $ 45,855 $ 38,702", ["revenues"]) == 1
+    assert line_item_hits("Total revenues $ 45,855", ["revenue"]) == 1
+    assert line_item_hits("Total liabilities 4,000,123", ["liability"]) == 1
+    assert line_item_hits("Net losses (1,234)", ["net loss"]) == 1
+    assert line_item_hits("Research and development 12,345", ["research and development"]) == 1
+    assert line_item_hits("Revenues grew in 2025", ["revenue"]) == 0, "a label still needs its figure"
