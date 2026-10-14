@@ -30,6 +30,10 @@
       "destination": "https://insightledger-edib.onrender.com/company"
     },
     {
+      "source": "/companies",
+      "destination": "https://insightledger-edib.onrender.com/companies"
+    },
+    {
       "source": "/documents",
       "destination": "https://insightledger-edib.onrender.com/documents"
     },
