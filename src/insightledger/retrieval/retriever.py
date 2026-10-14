@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Optional
 
 from ..config import Settings, get_settings
+from ..ingestion.layout import detect_regions
 from ..observability.tracing import Tracer
 from ..schemas import Query, Region, RetrievedPage
 from .embedder import Embedder, get_embedder
@@ -46,7 +47,9 @@ class Retriever:
         pages: list[RetrievedPage] = []
         for h in hits:
             p = h.payload
-            regions = [Region.model_validate(r) for r in p.get("regions", [])]
+            # Indexes built before regions were derived still carry them.
+            regions = ([Region.model_validate(r) for r in p["regions"]] if "regions" in p
+                       else detect_regions(p.get("text", "")))
             pages.append(RetrievedPage(
                 doc_id=p.get("doc_id", ""),
                 page_number=int(p.get("page_number", 0)),

@@ -27,6 +27,9 @@ def _registry_path(s: Settings):
     return s.index_dir / "doc_registry.json"
 
 
+# Regions are recomputed from page text on demand, so they are never written.
+_DERIVED = {"pages": {"__all__": {"regions"}}}
+
 # path -> (mtime_ns, size, parsed registry). Thirteen filings make a 9 MB
 # registry; parsing and validating it on every request (and once per claim in
 # the verifier) cost far more than the request itself.
@@ -37,7 +40,7 @@ def save_registry(docs: list[Document], s: Optional[Settings] = None) -> None:
     s = s or get_settings()
     s.index_dir.mkdir(parents=True, exist_ok=True)
     _registry_path(s).write_text(
-        json.dumps({d.doc_id: d.model_dump(mode="json") for d in docs}),
+        json.dumps({d.doc_id: d.model_dump(mode="json", exclude=_DERIVED) for d in docs}),
         encoding="utf-8")
     _REGISTRY_CACHE.pop(str(_registry_path(s)), None)
 

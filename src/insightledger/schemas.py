@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 
 class BBox(BaseModel):
@@ -54,7 +54,18 @@ class Page(BaseModel):
     height: int = 1400
     text: str = ""          # full-page extracted text (fallback / hybrid)
     section: str = ""       # e.g. "Item 1A. Risk Factors" (filing section)
-    regions: list[Region] = Field(default_factory=list)
+
+    @computed_field
+    @property
+    def regions(self) -> list[Region]:
+        """Layout blocks, worked out from the text whenever they are asked for.
+
+        Every region is a slice of the page text, so storing them kept each
+        page in memory several times over. They are still serialised for the
+        API; a stored copy is ignored on load.
+        """
+        from .ingestion.layout import detect_regions
+        return detect_regions(self.text)
 
 
 class Document(BaseModel):

@@ -4,7 +4,6 @@ from __future__ import annotations
 from typing import Optional
 
 from ..schemas import Document, Page
-from .layout import detect_regions
 
 
 def build_document_from_pages(
@@ -24,7 +23,6 @@ def build_document_from_pages(
             page_number=i + 1,
             image_path=img,
             text=text,
-            regions=detect_regions(text),
         ))
     return Document(
         doc_id=doc_id, title=title, source=source, doc_type=doc_type,

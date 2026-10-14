@@ -30,8 +30,7 @@ class Indexer:
                 "doc_id": doc.doc_id,
                 "page_number": page.page_number,
                 "image_path": page.image_path,
-                "text": page.text or " ".join(r.text for r in page.regions),
-                "regions": [r.model_dump(mode="json") for r in page.regions],
+                "text": page.text,
                 "title": doc.title,
             }
             self.store.upsert(self._key(doc.doc_id, page.page_number), vecs, payload)
