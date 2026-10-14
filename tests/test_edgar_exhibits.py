@@ -71,3 +71,18 @@ def test_a_40f_reads_its_annual_report_exhibits_but_not_the_boilerplate(monkeypa
         assert want in text
     for unwanted in ("Consent of auditors", "SOX certification", "viewer"):
         assert unwanted not in text
+
+
+def test_a_10k_that_incorporates_its_annual_report_reads_exhibit_13(monkeypatch):
+    files = {
+        "ibm-20251231.htm": "<html><body>Item 8. Financial Statements. Incorporated by reference "
+                            "from the company's 2025 Annual Report to Stockholders.</body></html>",
+        "ibm-ex13.htm": "<html><body>Consolidated Income Statement: net income $10,592</body></html>",
+        "ibm-ex21.htm": "<html><body>Subsidiaries of the registrant</body></html>",
+        "ibm-ex31.htm": "<html><body>SOX certification</body></html>",
+    }
+    c, meta = _client(monkeypatch, files)
+    meta.update(primary_doc="ibm-20251231.htm", form="10-K")
+    text = " ".join(p.text for p in c._build("IBM", meta, max_pages=50).pages)
+    assert "net income $10,592" in text, "Exhibit 13 was not read"
+    assert "Subsidiaries" not in text and "SOX certification" not in text

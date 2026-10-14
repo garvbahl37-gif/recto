@@ -32,13 +32,19 @@ _TAG = re.compile(r"<[^>]+>")
 _WS = re.compile(r"[ \t]+")
 # "Item 1.", "Item 1A.", "Item 7A." — the canonical 10-K/10-Q section anchors.
 _ITEM = re.compile(r"\bItem\s+(\d{1,2}[A-C]?)\s*[\.\:—-]", re.IGNORECASE)
+# The same anchor as a heading: at the start of a line, perhaps after its Part.
+# A cross-reference in running prose ("as discussed in Item 8.") is not one.
+_HEADING = re.compile(
+    r"^[ \t]*(?:PART\s+[IV]+[\.,:]?\s*[—–-]?\s*)?Item\s+\d{1,2}[A-C]?\s*[\.\:—–-]",
+    re.IGNORECASE | re.MULTILINE)
 # a token that is XBRL noise: namespaced tags, CIKs, bare ISO dates
 _XBRL_TOK = re.compile(r"^([a-z]+:[A-Za-z]|\d{10}$|\d{4}-\d{2}-\d{2}$)")
 
 
 class EdgarClient:
     _companies: Optional[list[dict]] = None   # ticker'd companies (~10k)
-    _entities: Optional[list[tuple[str, int]]] = None  # ALL EDGAR filers (name, cik)
+    _entities: Optional[mmap.mmap] = None     # ALL EDGAR filers, mapped from disk
+    _entities_lock = threading.Lock()
 
     def __init__(self, settings: Optional[Settings] = None):
         self.s = settings or get_settings()
@@ -233,71 +239,53 @@ class EdgarClient:
         lines = [cls._clean_tokens(ln) for ln in text.splitlines()]
         return "\n".join(ln for ln in lines if ln)
 
-    @staticmethod
-    def _item_sort_key(num: str) -> tuple[int, str]:
-        m = re.match(r"(\d+)([A-C]?)", num.upper())
-        return (int(m.group(1)), m.group(2)) if m else (99, "")
-
     @classmethod
     def _paginate(cls, text: str, max_pages: int = 400,
                   chars_per_page: int = 4000) -> list[str]:
-        """Slice a filing into fixed-size pages.
+        """Cut a filing into pages without losing any of it.
 
-        The cap has to clear a whole 10-K. At 40 pages (160K chars) NVIDIA's
-        filing stopped inside Item 1A, so its income statement was never
-        indexed and every revenue question was unanswerable while still
-        looking answerable. JPMorgan's runs to 172 pages; 400 is a guard
-        against pathological documents, not a budget.
+        The filing is kept in its own order and split where an "Item N."
+        heading starts a line. The only text dropped is the table of contents,
+        whose entries are a heading and a page number each. This used to keep
+        just the longest stretch per item number, which discarded everything
+        before the first heading (the cover page, and all of Intel's and GE's
+        reports, which index their items at the back) and every stretch a
+        cross-reference cut off: JPMorgan's filing lost 44% of its text.
+
+        400 pages clears the largest 10-K (JPMorgan's runs to about 250); it is
+        a guard against pathological documents, not a budget.
         """
-        """Section-aware pagination.
-
-        A 10-K mentions each 'Item N.' at least twice — once in the table of
-        contents (a short stub) and once as the real section. We group by item
-        number, keep the LONGEST occurrence (the real prose, not the TOC line),
-        order by canonical item number, drop stubs, then sub-split long
-        sections so every page is a coherent, embeddable chunk.
-        """
-        matches = list(_ITEM.finditer(text))
-        if len(matches) < 3:
-            # not a standard filing layout — fall back to fixed-size chunks
-            words, pages, buf, size = text.split(), [], [], 0
-            for w in words:
-                buf.append(w)
-                size += len(w) + 1
-                if size >= chars_per_page:
-                    pages.append(" ".join(buf)); buf, size = [], 0
-            if buf:
-                pages.append(" ".join(buf))
-            return pages[:max_pages] or [text[:chars_per_page]]
-
-        best: dict[str, str] = {}
-        for i, m in enumerate(matches):
-            num = m.group(1).upper()
-            end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-            sec = text[m.start():end].strip()
-            if len(sec) > len(best.get(num, "")):
-                best[num] = sec
-
-        sections = [best[n] for n in sorted(best, key=cls._item_sort_key)
-                    if len(best[n]) >= 300]          # drop TOC-only stubs
-        if not sections:
-            sections = [max(best.values(), key=len)]
-
+        cuts = [0] + [m.start() for m in _HEADING.finditer(text)] + [len(text)]
+        sections = [text[a:b].strip() for a, b in zip(cuts, cuts[1:])]
         pages: list[str] = []
         for sec in sections:
-            if len(sec) <= chars_per_page:
-                pages.append(sec)
-                continue
-            words, buf, size = sec.split(), [], 0
-            for w in words:
-                buf.append(w)
-                size += len(w) + 1
-                if size >= chars_per_page:
-                    pages.append(" ".join(buf)); buf, size = [], 0
-            if buf:
-                pages.append(" ".join(buf))
-        pages = [p for p in pages if len(p) >= 60]   # drop page-footer fragments
-        return pages[:max_pages] or [text[:chars_per_page]]
+            if len(sec) >= 300:                     # shorter is a contents entry
+                pages += cls._chunk(sec, chars_per_page)
+        pages = [pg for pg in pages if len(pg) >= 60]   # page-footer fragments
+        return pages[:max_pages] or [text[:chars_per_page].strip()]
+
+    @staticmethod
+    def _chunk(section: str, size: int) -> list[str]:
+        """Pages of up to `size` characters, broken between lines so a table row
+        stays whole; a paragraph longer than a page breaks between words."""
+        pages: list[str] = []
+        buf: list[str] = []
+        n = 0
+        for line in section.split("\n"):
+            while len(line) > size:
+                cut = line.rfind(" ", 0, size)
+                cut = cut if cut > 0 else size
+                if buf:
+                    pages.append("\n".join(buf)); buf, n = [], 0
+                pages.append(line[:cut])
+                line = line[cut:].lstrip()
+            if buf and n + len(line) > size:
+                pages.append("\n".join(buf)); buf, n = [], 0
+            buf.append(line)
+            n += len(line) + 1
+        if buf:
+            pages.append("\n".join(buf))
+        return pages
 
     @staticmethod
     def _section_label(page_text: str) -> str:
@@ -349,16 +337,23 @@ class EdgarClient:
     # A 40-F carries its annual information form, statements and MD&A as
     # Exhibits 1.x or 99.x, or as supplementary documents (name_d2.htm).
     _ANNUAL = re.compile(r"(?:ex|exhibit)[-_ ]?(?:99|1[1-3])|dex99|_d\d+\.htm$", re.I)
+    # Some 10-Ks (IBM's) incorporate their financial statements and MD&A from
+    # the annual report to shareholders, filed alongside as Exhibit 13 or as a
+    # supplementary document (IBM's is ibm-20251231_d2.htm).
+    _EX13 = re.compile(r"(?:ex|exhibit)[-_ ]?13(?!\d)|dex13|_d\d+\.htm$", re.I)
+    _BY_REFERENCE = re.compile(r"annual report to (?:stock|share)holders", re.I)
 
     def _exhibit_texts(self, meta: dict, limit: int = 4,
-                       max_chars: int = 900_000) -> list[tuple[str, str]]:
+                       max_chars: int = 900_000,
+                       wanted: Optional[re.Pattern] = None) -> list[tuple[str, str]]:
         """(name, text) of the documents that carry a filing's substance."""
         base = _ARCHIVE.format(cik=meta["cik"], acc=meta["accession"], doc="")
         try:
             items = self._get(base + "index.json").json()["directory"]["item"]
         except Exception:  # noqa: BLE001 — no index, read the main document alone
             return []
-        wanted = self._ANNUAL if meta["form"].upper().startswith("40-F") else self._RELEASE
+        if wanted is None:
+            wanted = self._ANNUAL if meta["form"].upper().startswith("40-F") else self._RELEASE
         out, total = [], 0
         for it in items:
             name = str(it.get("name", ""))
@@ -382,6 +377,9 @@ class EdgarClient:
         text = self._to_text(html)
         if meta["form"].upper() in self._EXHIBIT_FORMS:
             for name, body in self._exhibit_texts(meta):
+                text += f"\n\nExhibit {name}\n{body}"
+        elif meta["form"].upper().startswith("10-K") and self._BY_REFERENCE.search(text):
+            for name, body in self._exhibit_texts(meta, limit=2, wanted=self._EX13):
                 text += f"\n\nExhibit {name}\n{body}"
         pages = self._paginate(text, max_pages=max_pages)
         actual = meta["form"]
