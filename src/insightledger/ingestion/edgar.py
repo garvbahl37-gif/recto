@@ -13,8 +13,11 @@ Factors, MD&A, financials, …) that map cleanly to pages.
 """
 from __future__ import annotations
 
+import mmap
 import re
+import threading
 import time
+from pathlib import Path
 from typing import Optional
 
 import requests
@@ -75,34 +78,68 @@ class EdgarClient:
             self._tickers = {c["ticker"]: c["cik"] for c in EdgarClient._companies}
         return EdgarClient._companies
 
-    def _load_entities(self) -> list[tuple[str, int]]:
-        """The FULL EDGAR universe (every filer, incl. those without a ticker),
-        parsed from cik-lookup-data.txt and cached to disk + class. ~800k rows."""
-        if EdgarClient._entities is not None:
+    def _load_entities(self) -> mmap.mmap:
+        """Every entity that has ever filed with EDGAR, about a million rows of
+        "name:cik:", lower-cased on disk once and mapped rather than parsed.
+
+        Parsed into Python objects the list took 279 MB, more than half of a
+        small server. Mapped, it is searched in place and the operating system
+        keeps only the pages it has touched.
+        """
+        with EdgarClient._entities_lock:
+            if EdgarClient._entities is None:
+                path = self.s.cache_dir / "cik-lookup-data.lower.txt"
+                if not path.exists():
+                    self._fetch_entities(path)
+                with open(path, "rb") as f:
+                    EdgarClient._entities = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
             return EdgarClient._entities
-        cache = self.s.cache_dir / "cik-lookup-data.txt"
-        try:
-            text = cache.read_text(encoding="latin-1") if cache.exists() else ""
-        except Exception:
-            text = ""
-        if not text:
-            text = self._get(_CIK_LOOKUP_URL).content.decode("latin-1")
-            try:
-                cache.parent.mkdir(parents=True, exist_ok=True)
-                cache.write_text(text, encoding="latin-1")
-            except Exception:
-                pass
-        ents: list[tuple[str, int]] = []
-        for line in text.splitlines():
-            # format: "COMPANY NAME:0000320193:"
-            i = line.rfind(":", 0, len(line) - 1)
-            if i <= 0:
-                continue
-            name, cik = line[:i], line[i + 1:].rstrip(":")
-            if cik.isdigit():
-                ents.append((name, int(cik)))
-        EdgarClient._entities = ents
-        return ents
+
+    def _fetch_entities(self, path: Path) -> None:
+        """Lower-case EDGAR's filer list into `path` a megabyte at a time, from a
+        copy cached by earlier versions when there is one."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        part = path.with_suffix(".part")
+        legacy = self.s.cache_dir / "cik-lookup-data.txt"
+        with open(part, "wb") as out:
+            if legacy.exists():
+                with open(legacy, "rb") as src:
+                    for chunk in iter(lambda: src.read(1 << 20), b""):
+                        out.write(chunk.lower())
+            else:
+                with self.session.get(_CIK_LOOKUP_URL, stream=True, timeout=120) as r:
+                    r.raise_for_status()
+                    for chunk in r.iter_content(1 << 20):
+                        out.write(chunk.lower())
+        part.replace(path)
+
+    def prefetch_entities(self) -> None:
+        """Download the filer list ahead of time (the Docker build does), so the
+        first search after a cold start does not wait 40 MB for it."""
+        self._load_entities()
+
+    def _search_entities(self, q: str, skip: set[int], want: int) -> list[tuple[int, dict]]:
+        """Filers whose name contains `q`, in file order, up to `want` of them."""
+        mm = self._load_entities()
+        needle = q.encode("latin-1", "ignore")
+        found: list[tuple[int, dict]] = []
+        pos = mm.find(needle) if needle else -1
+        while pos != -1 and len(found) < want:
+            start = mm.rfind(b"\n", 0, pos) + 1
+            end = mm.find(b"\n", pos)
+            end = len(mm) if end == -1 else end
+            line = mm[start:end].rstrip(b"\r")
+            # format: "company name:0000320193:"; the match must be in the name
+            i = line.rfind(b":", 0, len(line) - 1)
+            cik = line[i + 1:].rstrip(b":") if i > 0 else b""
+            if i > 0 and pos - start < i and cik.isdigit() and int(cik) not in skip:
+                n = int(cik)
+                skip.add(n)
+                score = 60 if pos == start else 40 - min(20, pos - start)
+                found.append((score, {"ticker": f"CIK{n}",
+                                      "title": line[:i].decode("latin-1").title(), "cik": n}))
+            pos = mm.find(needle, end)
+        return found
 
     def cik_for_ticker(self, ticker: str) -> int:
         self._load_companies()
@@ -155,20 +192,7 @@ class EdgarClient:
         # Degrades gracefully to ticker-only results if the lookup is unavailable.
         if len(scored) < limit and len(q) >= 3:
             try:
-                for name, cik in self._load_entities():
-                    if cik in seen_cik:
-                        continue
-                    low = name.lower()
-                    if low.startswith(q):
-                        s = 60
-                    elif q in low:
-                        s = 40 - min(20, low.index(q))
-                    else:
-                        continue
-                    scored.append((s, {"ticker": f"CIK{cik}", "title": name.title(), "cik": cik}))
-                    seen_cik.add(cik)
-                    if len(scored) > limit * 6:
-                        break
+                scored += self._search_entities(q, seen_cik, limit * 6 + 1 - len(scored))
             except Exception:
                 pass
         scored.sort(key=lambda x: (-x[0], len(x[1]["title"])))

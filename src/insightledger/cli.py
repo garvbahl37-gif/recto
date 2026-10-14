@@ -35,6 +35,15 @@ def _cmd_bootstrap(_args) -> int:
           f"(tickers: {s.seed_tickers if s.bootstrap != 'sample' else 'synthetic fixture'})")
     r = _bootstrap_index(force=True)
     print(f"indexed {r.store.count()} pages -> {s.index_dir}")
+    if s.bootstrap != "sample":
+        # EDGAR's list of every filer, so the first search for a company
+        # without a ticker does not wait on a 40 MB download
+        from .ingestion import EdgarClient
+        try:
+            EdgarClient(s).prefetch_entities()
+            print("cached the EDGAR filer list")
+        except Exception as exc:  # noqa: BLE001
+            print(f"EDGAR filer list not cached: {exc}")
     return 0
 
 

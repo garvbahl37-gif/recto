@@ -3,6 +3,7 @@
     GET  /health              backends + index size
     POST /query               {question, top_k?, doc_ids?} -> grounded Answer
     GET  /documents           registered documents
+    GET  /companies           every company with a ticker on EDGAR, A to Z
     GET  /documents/{id}      full document (pages + regions) for UI rendering
     GET  /trace/{trace_id}    per-request agent span trace
     POST /eval                run the eval harness on demand
@@ -10,15 +11,18 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from ..agents import Orchestrator
+from ..agents.entities import ticker_of
 from ..config import get_settings
 from ..knowledge import (ensure_live_index, ensure_sample_index, ingest_filing,
                          ingest_ticker, load_registry)
@@ -26,6 +30,9 @@ from ..schemas import Answer
 
 app = FastAPI(title="Recto", version="0.2.0",
               description="Visual-first document intelligence (visual-RAG + multi-agent).")
+# Pages and the company index compress five to one. Event streams are left
+# alone (Starlette excludes text/event-stream), so stages still arrive live.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 _orch: Optional[Orchestrator] = None
 
@@ -163,10 +170,51 @@ def tickers(q: str = "", limit: int = 12) -> dict:
         results = EdgarClient(get_settings()).search_companies(q, limit=limit)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(502, f"EDGAR company list unavailable: {exc}")
-    indexed = {d.doc_id.split("-")[0] for d in load_registry().values()}
+    indexed = {ticker_of(d) for d in load_registry()}       # whole tickers: BRK-B
     for r in results:
         r["indexed"] = r["ticker"] in indexed
     return {"results": results}
+
+
+_DIRECTORY: Optional[bytes] = None
+
+
+def _index_key(name: str) -> str:
+    """Where a name files in the index: case, punctuation and a leading "The"
+    ignored, so "The Trade Desk" files under T."""
+    return re.sub(r"[^a-z0-9]+", " ", re.sub(r"^the\s+", "", name.lower())).strip()
+
+
+@app.get("/companies")
+def companies() -> Response:
+    """Every company with a ticker that files with the SEC, A to Z.
+
+    One row per company: EDGAR lists a ticker per share class and preferred
+    issue (JPMorgan has nine), so they are folded under the company, primary
+    ticker first. Built once per process; which ones Recto has read comes
+    from /documents, so this can be cached.
+    """
+    global _DIRECTORY
+    if _DIRECTORY is None:
+        from ..ingestion import EdgarClient
+        try:
+            listed = EdgarClient(get_settings())._load_companies()
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(502, f"EDGAR company list unavailable: {exc}")
+        by_cik: dict[int, list] = {}
+        for c in listed:
+            by_cik.setdefault(c["cik"], [c["title"], [], c["cik"]])[1].append(c["ticker"])
+        sections: dict[str, list] = {}
+        for name, tickers, cik in sorted(by_cik.values(), key=lambda r: _index_key(r[0])):
+            key = _index_key(name)
+            letter = key[:1].upper() if key[:1].isalpha() else "#"
+            sections.setdefault(letter, []).append([name, " ".join(tickers), cik])
+        order = sorted(sections, key=lambda k: (k != "#", k))
+        _DIRECTORY = json.dumps(
+            {"count": len(by_cik), "sections": [[k, sections[k]] for k in order]},
+            separators=(",", ":")).encode()
+    return Response(_DIRECTORY, media_type="application/json",
+                    headers={"Cache-Control": "public, max-age=3600"})
 
 
 @app.get("/company")
