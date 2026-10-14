@@ -5,8 +5,8 @@ questions about them. Each figure in an answer is ticked and footnoted, the
 filing page it came from is open beside it with the passage circled, and when
 the filing doesn't say something, Recto doesn't write it.
 
-**[Live demo](https://insightledger-opal.vercel.app)** · [open Recto](https://insightledger-opal.vercel.app/app)
-· [API health](https://insightledger-edib.onrender.com/health)
+**[Live demo](https://recto-reader.vercel.app)** · [open Recto](https://recto-reader.vercel.app/app)
+· [API health](https://recto-reader.vercel.app/health)
 
 _The demo runs on free tiers. The page loads instantly from Vercel's CDN; the
 reading service on Render sleeps when idle, so the first question after a quiet
