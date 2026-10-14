@@ -11,10 +11,10 @@ COPY pyproject.toml README.md ./
 COPY src ./src
 
 # Ingest the seed filings from EDGAR at build time and bake the index into the
-# image. A cold start then loads ~35 MB of vectors from disk in under a second
-# instead of re-fetching thirteen 10-Ks over the network.
+# image, with EDGAR's list of every filer. A cold start then loads the index
+# from disk in about a second instead of re-fetching thirty 10-Ks.
 ENV IL_BOOTSTRAP=live \
-    IL_SEED_TICKERS=AAPL,MSFT,NVDA,GOOGL,AMZN,META,TSLA,JPM,V,JNJ,WMT,LLY,NFLX \
+    IL_SEED_TICKERS=AAPL,MSFT,NVDA,GOOGL,AMZN,META,TSLA,NFLX,ORCL,AVGO,AMD,CRM,JPM,BAC,GS,V,MA,BRK-B,WMT,COST,KO,PEP,PG,MCD,NKE,DIS,JNJ,LLY,UNH,CVX \
     IL_EDGAR_USER_AGENT="Recto research garvbahl37@gmail.com"
 RUN python -m insightledger.cli bootstrap && \
     python -c "from insightledger.eval.golden_set import write_golden; write_golden()"

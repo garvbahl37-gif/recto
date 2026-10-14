@@ -68,9 +68,10 @@ class Settings:
 
     # EDGAR
     edgar_user_agent: str = "Recto research example@example.com"
-    # Thirteen large filers across tech, finance, health and retail. Measured:
-    # 1,227 pages, ~305 MB resident — inside Render free tier's 512 MB.
-    seed_tickers: str = "AAPL,MSFT,NVDA,GOOGL,AMZN,META,TSLA,JPM,V,JNJ,WMT,LLY,NFLX"
+    # Thirty large filers across tech, finance, consumer, health and energy,
+    # read whole: about 4,000 pages, ~200 MB resident with the index loaded,
+    # inside Render free tier's 512 MB with room for fetched filings.
+    seed_tickers: str = "AAPL,MSFT,NVDA,GOOGL,AMZN,META,TSLA,NFLX,ORCL,AVGO,AMD,CRM,JPM,BAC,GS,V,MA,BRK-B,WMT,COST,KO,PEP,PG,MCD,NKE,DIS,JNJ,LLY,UNH,CVX"
     seed_form: str = "10-K"
     # Ask about a company that is not indexed and Recto fetches its latest
     # annual report from EDGAR before answering. Fetched filings beyond the
@@ -79,7 +80,7 @@ class Settings:
     max_fetched: int = 16
     # Anyone can ask a question, so EDGAR fetches share one allowance per ten
     # minutes across the whole service (question-triggered and POST /ingest).
-    fetch_rate: int = 8
+    fetch_rate: int = 20
     bootstrap: str = "live"                # live (EDGAR) | sample (fixture, offline)
 
     # Retrieval / routing
@@ -181,11 +182,11 @@ def get_settings() -> Settings:
         qdrant_url=_env("QDRANT_URL", "http://localhost:6333"),
         qdrant_api_key=_env("QDRANT_API_KEY", ""),
         edgar_user_agent=_env("IL_EDGAR_USER_AGENT", "Recto research example@example.com"),
-        seed_tickers=_env("IL_SEED_TICKERS", "AAPL,MSFT,NVDA,GOOGL,AMZN,META,TSLA,JPM,V,JNJ,WMT,LLY,NFLX"),
+        seed_tickers=_env("IL_SEED_TICKERS", "AAPL,MSFT,NVDA,GOOGL,AMZN,META,TSLA,NFLX,ORCL,AVGO,AMD,CRM,JPM,BAC,GS,V,MA,BRK-B,WMT,COST,KO,PEP,PG,MCD,NKE,DIS,JNJ,LLY,UNH,CVX"),
         seed_form=_env("IL_SEED_FORM", "10-K"),
         auto_fetch=_env("IL_AUTO_FETCH", "1") == "1",
         max_fetched=int(_env("IL_MAX_FETCHED", "16")),
-        fetch_rate=int(_env("IL_FETCH_RATE", "8")),
+        fetch_rate=int(_env("IL_FETCH_RATE", "20")),
         bootstrap=_env("IL_BOOTSTRAP", "live"),
         top_k=int(_env("IL_TOP_K", "5")),
         verify_min_confidence=float(_env("IL_VERIFY_MIN_CONFIDENCE", "0.6")),
