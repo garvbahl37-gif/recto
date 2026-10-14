@@ -6,6 +6,7 @@ import Wordmark from "./components/Wordmark.jsx";
 import FilingPage from "./components/FilingPage.jsx";
 import Shelf from "./components/Shelf.jsx";
 import { Cross, Struck, Tick } from "./components/Pencil.jsx";
+import Opening, { openedThisSession, prefersStill } from "./components/Opening.jsx";
 
 const REPO = "https://github.com/garvbahl37-gif/recto";
 
@@ -37,6 +38,9 @@ const TABLE = [
 
 export default function Landing({ isDark, toggleTheme, onOpen }) {
   const [shelf, setShelf] = useState(SHELF);
+  // Nothing is fetched to show this page, so the opening never waits here;
+  // the documents call below does wake the reading service while it plays.
+  const [opening, setOpening] = useState(() => !openedThisSession() && !prefersStill());
   useEffect(() => {
     let alive = true;
     api.documents().then((d) => { if (alive && d.documents?.length) setShelf(d.documents); })
@@ -48,6 +52,7 @@ export default function Landing({ isDark, toggleTheme, onOpen }) {
 
   return (
     <div className="lp">
+      {opening && <Opening onDone={() => setOpening(false)} />}
       <header className="lp-head">
         <Wordmark />
         <nav className="lp-nav" aria-label="Sections">

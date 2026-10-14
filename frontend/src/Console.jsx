@@ -9,6 +9,7 @@ import { RectoReading, RectoShelf, RectoSource } from "./components/Recto.jsx";
 import { RectoIndex } from "./components/CompanyIndex.jsx";
 import CommandPalette from "./components/CommandPalette.jsx";
 import CompanyModal from "./components/CompanyModal.jsx";
+import Opening, { openedThisSession, prefersStill } from "./components/Opening.jsx";
 
 export default function Console({ isDark, toggleTheme }) {
   const [filings, setFilings] = useState([]);
@@ -35,7 +36,43 @@ export default function Console({ isDark, toggleTheme }) {
     try { setFilings((await api.documents()).documents); setLoadErr(""); }
     catch (e) { setLoadErr(e.message); }
   }, []);
-  useEffect(() => { load(); }, [load]);
+
+  // The first load waits out a cold start: the reading service sleeps on the
+  // free tier and takes about a minute to answer, so keep asking until it does.
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const t0 = Date.now();
+      for (;;) {
+        try {
+          const d = await api.documents();
+          if (!alive) return;
+          setFilings(d.documents); setLoadErr("");
+          break;
+        } catch (e) {
+          if (!alive) return;
+          setLoadErr(e.message);
+          if (Date.now() - t0 > 95000) break;
+          await new Promise((r) => setTimeout(r, 2500));
+        }
+      }
+      if (alive) setReady(true);
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  // A first visit gets the whole opening. A later one, or anyone who asked
+  // for less motion, gets it only if the service is still asleep after a
+  // moment, opened straight onto the page.
+  const [opening, setOpening] = useState(() =>
+    (openedThisSession() || prefersStill() ? "pending" : "full"));
+  useEffect(() => {
+    if (opening !== "pending") return;
+    if (ready) { setOpening("off"); return; }
+    const t = setTimeout(() => setOpening((o) => (o === "pending" ? "wait" : o)), 900);
+    return () => clearTimeout(t);
+  }, [opening, ready]);
 
   useEffect(() => {
     const h = (e) => {
@@ -104,6 +141,9 @@ export default function Console({ isDark, toggleTheme }) {
 
   return (
     <div className="desk">
+      {(opening === "full" || opening === "wait") && (
+        <Opening variant={opening} ready={ready} onDone={() => setOpening("off")} />
+      )}
       <header className="desk-head">
         <Wordmark href="/" />
         <button className="scope" onClick={() => { setShowShelf((s) => !s); setShowIndex(false); setView("recto"); }}

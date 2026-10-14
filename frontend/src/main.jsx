@@ -5,6 +5,7 @@ import "./styles/tokens.css";
 import "./styles/recto.css";
 import "./styles/console.css";
 import "./styles/landing.css";
+import "./styles/opening.css";
 
 createRoot(document.getElementById("root")).render(
   <React.StrictMode>

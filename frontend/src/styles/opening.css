@@ -1,0 +1,100 @@
+/* =============================================================================
+   The opening — a book on the pasteboard opens, riffles to NVIDIA's page 101,
+   and the pencil circles the figure. Same three voices as everywhere else:
+   the filing in Tinos, Recto in Sofia Sans, judgement in pencil. The only
+   light is a lamp's pool on the board; the only depth is the book's own.
+   ========================================================================== */
+.fx {
+  position: fixed; inset: 0; z-index: 300; overflow: hidden;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 30px;
+  background: radial-gradient(125% 95% at 50% 40%, var(--board) 28%, var(--board-2) 100%);
+  --W: max(250px, min(820px, 88vw, calc((100vh - 290px) * 1.5)));
+  --H: calc(var(--W) / 1.5);
+  --cast: rgba(0, 0, 0, 0.32);
+}
+:root[data-theme="dark"] .fx { --cast: rgba(0, 0, 0, 0.62); }
+
+.fx-stage { perspective: 2600px; perspective-origin: 50% 30%; }
+.fx-book { position: relative; width: var(--W); height: var(--H); transform-style: preserve-3d; }
+
+/* contact shadow under the block; it widens as the cover opens */
+.fx-shadow { position: absolute; left: 50%; right: 0.5%; top: 4%; bottom: -2.5%;
+  background: var(--cast); filter: blur(calc(var(--W) * 0.018)); transform-origin: 100% 50%; }
+
+.fx-page, .fx-leaf, .fx-cover { position: absolute; top: 0; left: 50%; width: 50%; height: 100%; }
+.fx-leaf, .fx-cover { transform-origin: 0 50%; transform-style: preserve-3d; will-change: transform; }
+
+/* paper: the static page has a block of leaves under it, shown at the edge */
+.fx-page, .fx-face { background: var(--paper); overflow: hidden; padding: 8% 10% 11% 9%; }
+.fx-page { box-shadow: 1px 1px 0 var(--paper-2), 2px 2px 0 var(--rule), 3px 3px 0 var(--paper-2),
+  4px 4px 0 var(--rule), 5px 5px 0 var(--paper-2); }
+.fx-face { position: absolute; inset: 0; backface-visibility: hidden; -webkit-backface-visibility: hidden; }
+.fx-back { transform: rotateY(180deg); padding: 8% 9% 11% 10%; }
+
+/* the fold: every page darkens toward the spine */
+.fx-page::after, .fx-face::after { content: ""; position: absolute; top: 0; bottom: 0; width: 10%;
+  pointer-events: none; }
+.fx-page::after, .fx-front::after { left: 0; background: linear-gradient(to right, var(--fold), transparent); }
+.fx-back::after { right: 0; background: linear-gradient(to left, var(--fold), transparent); }
+
+/* light on a turning leaf: darkest edge-on */
+.fx-shade { position: absolute; inset: 0; opacity: 0; pointer-events: none; z-index: 2;
+  background: linear-gradient(100deg, rgba(0, 0, 0, 0.3), rgba(0, 0, 0, 0.06) 70%); }
+
+/* type seen too fast to read */
+.fx-copy { display: block; }
+.g { display: block; height: calc(var(--W) * 0.0042); margin-bottom: calc(var(--W) * 0.0066);
+  background: var(--ink); opacity: 0.16; }
+.g-h { height: calc(var(--W) * 0.007); opacity: 0.5; margin: calc(var(--W) * 0.004) 0 calc(var(--W) * 0.009); }
+.g-row { display: flex; gap: 5%; }
+.g-row .g:first-child { margin-right: auto; }
+.g-n { width: 9%; }
+.g-gap { display: block; height: calc(var(--W) * 0.008); }
+
+/* the filing's own words on pages 100 and 101 */
+.fx-print { font-family: var(--filing); font-size: calc(var(--W) * 0.0104); line-height: 1.42;
+  color: var(--ink); text-align: justify; hyphens: auto; -webkit-hyphens: auto; }
+.fx-line { display: block; }
+
+.fx-folio { position: absolute; bottom: 4.4%; font-family: var(--sans); font-weight: 600;
+  font-size: calc(var(--W) * 0.0125); color: var(--ink-3); font-variant-numeric: tabular-nums lining-nums; }
+.fx-page .fx-folio, .fx-front .fx-folio { right: 9%; }
+.fx-back .fx-folio { left: 9%; }
+.fx-marks { position: absolute; left: 0; top: 0; width: 100%; height: 100%; overflow: visible;
+  pointer-events: none; z-index: 1; }
+
+/* the cover: ink board, the name, and its footnote */
+.fx-board { background: var(--ink); color: var(--paper); padding: 12% 10% 10% 12%;
+  display: flex; flex-direction: column; justify-content: space-between; }
+.fx-board::after { left: 0; width: 8%;
+  background: linear-gradient(to right, rgba(0, 0, 0, 0.45), rgba(255, 255, 255, 0.05) 45%, transparent); }
+.fx-title { font-family: var(--display); font-weight: 860; font-size: calc(var(--W) * 0.14);
+  line-height: 0.8; letter-spacing: -0.01em; }
+.fx-title sup, .fx-note sup { font-family: var(--sans); font-weight: 750; color: var(--pencil);
+  position: relative; vertical-align: baseline; line-height: 1; }
+.fx-title sup { font-size: 0.19em; top: -2.6em; margin-left: 0.08em; }
+.fx-note { font-size: calc(var(--W) * 0.0165); font-weight: 520; line-height: 1.35; max-width: 26ch; }
+.fx-note sup { font-size: 0.85em; top: -0.4em; margin-right: 0.35em; }
+.fx-endpaper { background: var(--paper-2); }
+
+/* waiting on the reading service: said plainly, with the time it has taken */
+.fx-wait { min-height: 66px; max-width: 46ch; padding: 0 16px; text-align: center; opacity: 0;
+  transform: translateY(6px); transition: opacity 0.5s var(--ease), transform 0.5s var(--ease); }
+.fx-wait.on { opacity: 1; transform: none; }
+.fx-wait-h { margin: 0; font-size: var(--t-16); font-weight: 680; color: var(--ink); }
+.fx-wait-t { margin-left: 10px; font-weight: 600; color: var(--ink-3); }
+.fx-wait-p { margin: 4px 0 0; font-size: var(--t-14); line-height: 1.5; color: var(--ink-2); }
+
+.fx-skip { position: absolute; right: 22px; bottom: 16px; min-height: 44px; padding: 0 10px;
+  font-size: var(--t-14); font-weight: 650; color: var(--ink-2); }
+.fx-skip:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 3px;
+  text-decoration-color: var(--pencil); }
+
+@media (max-width: 600px) {
+  .fx { gap: 22px; }
+  .fx-skip { right: 10px; bottom: 8px; }
+}
+
+/* the pencil here is scaled with the book, so it starts a little finer */
+.fx-marks .pencil { stroke-width: 1.4; }
+.fx-marks .pencil.thick { stroke-width: 1.9; }
