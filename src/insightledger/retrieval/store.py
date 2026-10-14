@@ -36,77 +36,189 @@ class VectorStore(Protocol):
     def load(self) -> None: ...
 
 
+# Cells in one block of the search gather (float32): 16 MB.
+_GATHER_CELLS = 1 << 22
+
+
 @dataclass
 class MemoryStore:
-    settings: Settings = field(default_factory=get_settings)
-    dim: Optional[int] = None            # expected vector width; None accepts any
-    _vectors: dict[str, np.ndarray] = field(default_factory=dict)
-    _payloads: dict[str, dict[str, Any]] = field(default_factory=dict)
+    """In-process multi-vector store that keeps each distinct row once.
 
+    A page's matrix holds one row per word, and the hashed stub vectors repeat
+    every common word on every page: in the live index only 5.7% of 366,853
+    rows were distinct. So rows live once in a shared table and each page
+    keeps the numbers of its rows. Scores are unchanged, the vectors shrink
+    from ~94 MB to ~7 MB, and a query is scored against the table once rather
+    than against every page.
+    """
+    settings: Settings = field(default_factory=get_settings)
+    dim: Optional[int] = None                      # expected width; None accepts any
+    _ids: dict[str, np.ndarray] = field(default_factory=dict)       # page -> row ids
+    _payloads: dict[str, dict[str, Any]] = field(default_factory=dict)
+    _table: Optional[np.ndarray] = None            # capacity-doubling row table
+    _n: int = 0                                    # rows in use
+    _row_of: dict[int, int] = field(default_factory=dict)            # hash(row) -> id
+
+    # -------------------------------------------------------------- rows
+    @property
+    def vocab_rows(self) -> int:
+        return self._n
+
+    def _vocab(self) -> np.ndarray:
+        if self._table is None:
+            return np.zeros((0, self.dim or 0), dtype=np.float32)
+        return self._table[: self._n]
+
+    def _row_ids(self, vectors: np.ndarray) -> np.ndarray:
+        v = np.ascontiguousarray(vectors, dtype=np.float32)
+        if v.ndim != 2:
+            raise ValueError(f"expected a (rows, dim) matrix, got shape {v.shape}")
+        if self.dim and v.shape[1] != self.dim:
+            raise ValueError(f"expected width {self.dim}, got {v.shape[1]}")
+        ids = np.empty(len(v), dtype=np.int32)
+        fresh: list[np.ndarray] = []
+        for i, row in enumerate(v):
+            h = hash(row.tobytes())
+            j = self._row_of.get(h)
+            # compare on a hit, so a hash collision costs a row, never a score
+            if j is not None and j < self._n and np.array_equal(self._table[j], row):
+                ids[i] = j
+                continue
+            j = self._n + len(fresh)
+            fresh.append(row)
+            self._row_of.setdefault(h, j)
+            ids[i] = j
+        if fresh:
+            self._append(np.vstack(fresh))
+        return ids
+
+    def _append(self, rows: np.ndarray) -> None:
+        need = self._n + len(rows)
+        if self._table is None or need > len(self._table):
+            cap = max(need, 2 * (0 if self._table is None else len(self._table)), 1024)
+            grown = np.empty((cap, rows.shape[1]), dtype=np.float32)
+            if self._table is not None:
+                grown[: self._n] = self._table[: self._n]
+            self._table = grown
+        self._table[self._n: need] = rows
+        self._n = need                              # publish only once written
+
+    @property
+    def _vectors(self) -> dict[str, np.ndarray]:
+        """Per-page matrices, rebuilt on demand (diagnostics and old callers)."""
+        vocab = self._vocab()
+        return {k: vocab[ids] for k, ids in list(self._ids.items())}
+
+    # ------------------------------------------------------------- write
     def upsert(self, key: str, vectors: np.ndarray, payload: dict[str, Any]) -> None:
-        # payload first: a reader that sees the vectors can always find it
+        ids = self._row_ids(vectors)               # rows land before the page points at them
         self._payloads[key] = payload
-        self._vectors[key] = vectors.astype(np.float32)
+        self._ids[key] = ids
 
     def delete_doc(self, doc_id: str) -> int:
-        """Drop every page of one filing; returns how many were removed."""
+        """Drop every page of one filing; returns how many were removed. Rows
+        it shared stay in the table for the pages still using them."""
         keys = [k for k, p in list(self._payloads.items()) if p.get("doc_id") == doc_id]
         for k in keys:
-            self._vectors.pop(k, None)
+            self._ids.pop(k, None)
             self._payloads.pop(k, None)
         return len(keys)
 
+    # ------------------------------------------------------------- read
     def search(self, query_vectors: np.ndarray, top_k: int,
                doc_ids: Optional[list[str]] = None,
                weighting: str = "none") -> list[Hit]:
-        # Snapshot first: an ingest may be adding pages on another thread, and
-        # iterating the live dict would raise "changed size during iteration".
-        vectors = dict(self._vectors)
+        # Snapshot the page list before the table: an ingest on another thread
+        # appends rows first and pages second, so every page seen here already
+        # has its rows, and nothing iterates a dict that is changing size.
+        ids_of = dict(self._ids)
         payloads = self._payloads
-        keys = [k for k in vectors
+        vocab = self._vocab()
+        keys = [k for k in ids_of
                 if k in payloads and (not doc_ids or payloads[k].get("doc_id") in doc_ids)]
         if not keys:
             return []
-        if weighting == "idf" and query_vectors.size:
-            # (pages, query tokens): weight each token by how rare it is among
-            # the pages in scope, so scoping to one filing re-weights correctly
-            best = np.stack([best_per_token(query_vectors, vectors[k]) for k in keys])
-            with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
-                scores = best @ idf_weights(best)   # same spurious macOS flag
-            scores = np.nan_to_num(scores, nan=0.0, posinf=0.0, neginf=0.0)
+        q = np.asarray(query_vectors, dtype=np.float32)
+        if q.size == 0 or len(vocab) == 0:
+            scores = np.zeros(len(keys))
         else:
-            scores = np.array([maxsim(query_vectors, vectors[k]) for k in keys])
+            # Every page's rows in one gather, then each page's best match per
+            # token with one reduceat: no Python-level work per page, which is
+            # what keeps search flat as the index grows.
+            lens = np.fromiter((len(ids_of[k]) for k in keys), dtype=np.int64, count=len(keys))
+            best = np.zeros((len(keys), len(q)), dtype=np.float32)
+            filled = lens > 0
+            if filled.any():
+                flat = np.concatenate([ids_of[k] for k in keys])
+                starts = np.concatenate([[0], np.cumsum(lens)[:-1]])[filled]
+                # The gather is (query tokens x every stored row), so take the
+                # tokens a block at a time: a long question over a full shelf
+                # would otherwise want gigabytes for it at once.
+                step = max(1, _GATHER_CELLS // len(flat))
+                for i in range(0, len(q), step):
+                    with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+                        sims = q[i:i + step] @ vocab.T          # (tokens, distinct rows)
+                    sims = np.nan_to_num(sims, nan=0.0, posinf=1.0, neginf=-1.0)
+                    best[filled, i:i + step] = np.maximum.reduceat(
+                        sims[:, flat], starts, axis=1).T
+            if weighting == "idf":
+                # weight each token by how rare it is among the pages in scope
+                with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+                    scores = best @ idf_weights(best)
+            else:
+                scores = best.sum(axis=1)
+            scores = np.nan_to_num(scores, nan=0.0, posinf=0.0, neginf=0.0)
         order = np.argsort(-scores, kind="stable")[:top_k]
         return [Hit(key=keys[i], score=float(scores[i]), payload=payloads[keys[i]])
                 for i in order]
 
     def count(self) -> int:
-        return len(self._vectors)
+        return len(self._ids)
 
+    # ------------------------------------------------------------- disk
     @property
     def _path(self) -> Path:
         return self.settings.index_dir / "memory_index"
 
     def save(self) -> None:
         self.settings.index_dir.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(str(self._path) + ".npz", **self._vectors)
+        keys = list(self._ids)
+        lens = np.array([len(self._ids[k]) for k in keys], dtype=np.int64)
+        flat = (np.concatenate([self._ids[k] for k in keys]) if keys
+                else np.zeros(0, dtype=np.int32))
+        np.savez_compressed(str(self._path) + ".npz", __vocab__=self._vocab(),
+                            __ids__=flat, __lens__=lens)
         (self._path.with_suffix(".json")).write_text(
-            json.dumps(self._payloads), encoding="utf-8")
+            json.dumps({"__keys__": keys, "payloads": self._payloads}), encoding="utf-8")
 
     def load(self) -> None:
         npz = Path(str(self._path) + ".npz")
         js = self._path.with_suffix(".json")
-        if npz.exists() and js.exists():
-            data = np.load(npz)
-            vectors = {k: data[k] for k in data.files}
-            # An index saved by an embedder of another width cannot be
-            # searched with this one's queries; start empty and let the
-            # bootstrap rebuild it rather than crash on the first matmul.
-            if self.dim and any(v.ndim != 2 or v.shape[1] != self.dim for v in vectors.values()):
-                self._vectors, self._payloads = {}, {}
-                return
-            self._vectors = vectors
-            self._payloads = json.loads(js.read_text(encoding="utf-8"))
+        if not (npz.exists() and js.exists()):
+            return
+        data = np.load(npz)
+        meta = json.loads(js.read_text(encoding="utf-8"))
+        self._ids, self._payloads, self._table, self._n, self._row_of = {}, {}, None, 0, {}
+        if "__vocab__" in data.files:                       # shared-row format
+            vocab = data["__vocab__"]
+            if self.dim and vocab.size and vocab.shape[1] != self.dim:
+                return                                      # another width: rebuild
+            if len(vocab):
+                self._append(vocab.astype(np.float32))
+                self._row_of = {hash(r.tobytes()): i for i, r in enumerate(self._vocab())}
+            flat, lens = data["__ids__"], data["__lens__"]
+            offs = np.concatenate([[0], np.cumsum(lens)])
+            for i, k in enumerate(meta["__keys__"]):
+                self._ids[k] = flat[offs[i]: offs[i + 1]].astype(np.int32)
+            self._payloads = meta["payloads"]
+            return
+        # The earlier one-matrix-per-page format: fold it into shared rows.
+        mats = {k: data[k] for k in data.files}
+        if self.dim and any(m.ndim != 2 or m.shape[1] != self.dim for m in mats.values()):
+            return                                          # another width: rebuild
+        payloads = meta if "payloads" not in meta else meta["payloads"]
+        for k, m in mats.items():
+            self.upsert(k, m, payloads.get(k, {}))
 
 
 class QdrantStore:
