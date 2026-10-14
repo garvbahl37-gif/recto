@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -105,6 +105,53 @@ def query(req: QueryRequest) -> Answer:
     return _orchestrator().answer(req.question, top_k=req.top_k, doc_ids=req.doc_ids)
 
 
+@app.post("/query/stream")
+def query_stream(req: QueryRequest) -> StreamingResponse:
+    """The same pipeline as /query, reported stage by stage as Server-Sent
+    Events: router, retriever (with the pages it chose), extractor, verifier,
+    synthesizer, then the answer. A model call can take twenty seconds; the
+    reader should watch it work rather than stare at a spinner."""
+    import queue
+    import threading
+
+    if not req.question.strip():
+        raise HTTPException(400, "question is required")
+    events: "queue.Queue[Optional[dict]]" = queue.Queue()
+
+    def emit(stage: str, payload: dict) -> None:
+        events.put({"stage": stage, **payload})
+
+    def run() -> None:
+        try:
+            ans = _orchestrator().answer(req.question, top_k=req.top_k,
+                                         doc_ids=req.doc_ids, emit=emit)
+            events.put({"stage": "answer", "answer": ans.model_dump(mode="json")})
+        except Exception as exc:  # noqa: BLE001
+            events.put({"stage": "error", "message": str(exc)[:300]})
+        finally:
+            events.put(None)
+
+    threading.Thread(target=run, daemon=True).start()
+
+    def stream():
+        yield ": open\n\n"
+        while True:
+            try:
+                item = events.get(timeout=15)
+            except queue.Empty:
+                # a comment line keeps proxies from closing an idle stream
+                # while the model is thinking
+                yield ": still reading\n\n"
+                continue
+            if item is None:
+                return
+            yield f"data: {json.dumps(item)}\n\n"
+
+    return StreamingResponse(stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
+
+
 @app.get("/tickers")
 def tickers(q: str = "", limit: int = 12) -> dict:
     """Search the full EDGAR company list for the picker."""
@@ -175,6 +222,26 @@ def document(doc_id: str) -> dict:
     if doc_id not in reg:
         raise HTTPException(404, "document not found")
     return reg[doc_id].model_dump(mode="json")
+
+
+@app.get("/documents/{doc_id}/pages/{page_number}")
+def document_page(doc_id: str, page_number: int) -> dict:
+    """One page and where it sits in its filing — what the reader shows beside
+    an answer. Fetching the whole document for this moved megabytes per view."""
+    doc = load_registry().get(doc_id)
+    if doc is None:
+        raise HTTPException(404, "document not found")
+    page = next((p for p in doc.pages if p.page_number == page_number), None)
+    if page is None:
+        raise HTTPException(404, "page not found")
+    return {
+        "doc_id": doc.doc_id, "title": doc.title, "doc_type": doc.doc_type,
+        "company": doc.metadata.get("name", doc.title),
+        "date": doc.metadata.get("date", ""), "source": doc.source,
+        "page_number": page.page_number, "total_pages": len(doc.pages),
+        "section": page.section or "", "text": page.text or "",
+        "regions": [r.model_dump(mode="json") for r in page.regions],
+    }
 
 
 @app.get("/trace/{trace_id}")

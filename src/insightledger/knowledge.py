@@ -24,21 +24,39 @@ def _registry_path(s: Settings):
     return s.index_dir / "doc_registry.json"
 
 
+# path -> (mtime_ns, size, parsed registry). Thirteen filings make a 9 MB
+# registry; parsing and validating it on every request (and once per claim in
+# the verifier) cost far more than the request itself.
+_REGISTRY_CACHE: dict[str, tuple[int, int, dict[str, Document]]] = {}
+
+
 def save_registry(docs: list[Document], s: Optional[Settings] = None) -> None:
     s = s or get_settings()
     s.index_dir.mkdir(parents=True, exist_ok=True)
     _registry_path(s).write_text(
         json.dumps({d.doc_id: d.model_dump(mode="json") for d in docs}),
         encoding="utf-8")
+    _REGISTRY_CACHE.pop(str(_registry_path(s)), None)
 
 
 def load_registry(s: Optional[Settings] = None) -> dict[str, Document]:
+    """The document registry, parsed once and reused until the file changes.
+
+    Callers get a shared dict: copy it before mutating (ingest does).
+    """
     s = s or get_settings()
     p = _registry_path(s)
     if not p.exists():
         return {}
+    st = p.stat()
+    key = str(p)
+    hit = _REGISTRY_CACHE.get(key)
+    if hit and hit[0] == st.st_mtime_ns and hit[1] == st.st_size:
+        return hit[2]
     raw = json.loads(p.read_text(encoding="utf-8"))
-    return {k: Document.model_validate(v) for k, v in raw.items()}
+    reg = {k: Document.model_validate(v) for k, v in raw.items()}
+    _REGISTRY_CACHE[key] = (st.st_mtime_ns, st.st_size, reg)
+    return reg
 
 
 def ingest_ticker(ticker: str, form: str = "10-K",
@@ -51,7 +69,7 @@ def ingest_ticker(ticker: str, form: str = "10-K",
     doc = EdgarClient(s).fetch(ticker, form=form)
     Indexer(embedder=retriever.embedder, store=retriever.store,
             settings=s).index_documents([doc])
-    reg = load_registry(s)
+    reg = dict(load_registry(s))
     reg[doc.doc_id] = doc
     save_registry(list(reg.values()), s)
     return doc
@@ -67,7 +85,7 @@ def ingest_filing(ticker: str, accession: str, primary_doc: str, form: str,
     doc = EdgarClient(s).fetch_specific(ticker, accession, primary_doc, form, date)
     Indexer(embedder=retriever.embedder, store=retriever.store,
             settings=s).index_documents([doc])
-    reg = load_registry(s)
+    reg = dict(load_registry(s))
     reg[doc.doc_id] = doc
     save_registry(list(reg.values()), s)
     return doc

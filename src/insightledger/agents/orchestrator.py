@@ -29,6 +29,18 @@ from ..schemas import Answer, Citation, Difficulty, Query
 from .state import ILState
 
 
+def _emit(state: ILState, stage: str, **payload) -> None:
+    """Report progress to a listener, if there is one. Never lets a broken
+    listener take the pipeline down with it."""
+    fn = state.get("emit")
+    if fn is None:
+        return
+    try:
+        fn(stage, payload)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 class Orchestrator:
     def __init__(self, retriever: Optional[Retriever] = None,
                  provider: Optional[Provider] = None,
@@ -49,6 +61,7 @@ class Orchestrator:
             state["top_k"] = k
             state.setdefault("retries", 0)
             state["log"].append(f"router: difficulty={difficulty.value} top_k={k}")
+        _emit(state, "router", difficulty=difficulty.value, top_k=k)
         return state
 
     def retrieve(self, state: ILState) -> ILState:
@@ -60,6 +73,9 @@ class Orchestrator:
             state["log"].append(
                 f"retriever: {len(state['retrieved'])} pages "
                 f"[{', '.join(f'{p.doc_id} p.{p.page_number}' for p in state['retrieved'])}]")
+        _emit(state, "retriever", pages=[
+            {"doc_id": p.doc_id, "page_number": p.page_number, "score": round(p.score, 3)}
+            for p in state["retrieved"]])
         return state
 
     def extract(self, state: ILState) -> ILState:
@@ -69,6 +85,7 @@ class Orchestrator:
                 state["question"], state["retrieved"], state["meter"])
             state["claims"] = claims
             state["log"].append(f"extractor: {len(claims)} candidate claims")
+        _emit(state, "extractor", claims=len(claims))
         return state
 
     def verify(self, state: ILState) -> ILState:
@@ -94,6 +111,8 @@ class Orchestrator:
             state["log"].append(
                 f"verifier: {n_ok}/{len(state['claims'])} grounded, "
                 f"confidence={state['verified_confidence']:.2f}")
+        _emit(state, "verifier", grounded=n_ok, total=len(state["claims"]),
+              confidence=round(state["verified_confidence"], 3))
         return state
 
     def decide(self, state: ILState) -> str:
@@ -106,6 +125,7 @@ class Orchestrator:
         state["top_k"] = state["top_k"] + 3   # widen the net on retry
         state["log"].append(
             f"decision: retry #{state['retries']} (widen to top_k={state['top_k']})")
+        _emit(state, "retry", attempt=state["retries"], top_k=state["top_k"])
         return "retrieve"
 
     def synthesize(self, state: ILState) -> ILState:
@@ -121,6 +141,7 @@ class Orchestrator:
             state["citations"] = citations
             state["model_used"] = model
             state["log"].append(f"synthesizer: model={model}, {len(citations)} citations")
+        _emit(state, "synthesizer", model=model, citations=len(citations))
         return state
 
     # ----------------------------- runners --------------------------------- #
@@ -163,10 +184,12 @@ class Orchestrator:
         return app.invoke(state, config={"recursion_limit": 25})
 
     def answer(self, question: str, top_k: Optional[int] = None,
-               doc_ids: Optional[list[str]] = None) -> Answer:
+               doc_ids: Optional[list[str]] = None, emit=None) -> Answer:
         meter = CostMeter()
         tracer = get_tracer()
         state = self._initial_state(question, top_k, doc_ids, meter, tracer)
+        if emit is not None:
+            state["emit"] = emit
         t0 = time.perf_counter()
         if self.s.resolve_graph() == "langgraph":
             try:

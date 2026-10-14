@@ -31,3 +31,6 @@ class ILState(TypedDict, total=False):
     meter: Any        # CostMeter
     tracer: Any       # Tracer
     log: list[str]
+    # optional progress callback: emit(stage, payload). Declared here because
+    # LangGraph only carries keys that are part of the state schema.
+    emit: Any
