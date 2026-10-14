@@ -34,8 +34,8 @@ export function RectoShelf({ filings, scope, onScope, onPick }) {
       </h2>
       <Shelf filings={filings} active={scope} onPick={onScope} />
       <div className="add">
-        <p className="add-p">Add any company that files with the SEC. Recto pulls the filing
-          from EDGAR and indexes every page.</p>
+        <p className="add-p">Ask about any company that files with the SEC and Recto fetches its
+          annual report first. To pick a particular filing, find the company here.</p>
         <CompanyPicker onSelect={onPick} />
       </div>
     </div>
@@ -54,7 +54,20 @@ function PullRow({ p, nameOf }) {
   );
 }
 
-export function RectoReading({ pages, nameOf, done }) {
+export function RectoReading({ pages, nameOf, done, fetching }) {
+  if (fetching && !pages.length) {
+    const who = (fetching.company || fetching.ticker || "").toLowerCase()
+      .replace(/\s*\/.*$/, "").replace(/\b(inc|corp|co|ltd|plc)\.?$/, "").trim()
+      .replace(/\b([a-z])/g, (c) => c.toUpperCase());
+    return (
+      <div className="recto-inner">
+        <div className="running"><span>Not on the shelf yet</span><span>SEC EDGAR</span></div>
+        <h2 className="recto-h">Fetching {possessive(who)} annual report from EDGAR.</h2>
+        <p className="add-p">Recto reads every page of it before answering. The next question
+          about {who} won&rsquo;t need to wait.</p>
+      </div>
+    );
+  }
   return (
     <div className="recto-inner">
       <div className="running"><span>Pulled from the index</span>

@@ -185,3 +185,11 @@ def test_an_empty_model_read_falls_back_to_verbatim_candidates():
         "What was revenue in fiscal 2026?", _pages(), CostMeter())
     assert claims and "165,218" in claims[0].text
     assert claims[0].verified is None, "candidates are unverified until the verifier agrees"
+
+
+def test_a_lead_that_repeats_its_only_bullet_is_dropped():
+    c = _claim(); c.verified = True
+    text = ("Starbucks operated 40,990 stores.\n"
+            f"- Starbucks operated 40,990 stores. [{DOC} p.50]")
+    out, _ = _provider(FakeSession(text)).synthesize("How many stores?", [c], CostMeter())
+    assert out.count("40,990") == 1, out

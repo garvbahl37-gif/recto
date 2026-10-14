@@ -72,6 +72,11 @@ class Settings:
     # 1,227 pages, ~305 MB resident — inside Render free tier's 512 MB.
     seed_tickers: str = "AAPL,MSFT,NVDA,GOOGL,AMZN,META,TSLA,JPM,V,JNJ,WMT,LLY,NFLX"
     seed_form: str = "10-K"
+    # Ask about a company that is not indexed and Recto fetches its latest
+    # annual report from EDGAR before answering. Fetched filings beyond the
+    # budget are evicted least-recently-used first; seeds never are.
+    auto_fetch: bool = True
+    max_fetched: int = 16
     bootstrap: str = "live"                # live (EDGAR) | sample (fixture, offline)
 
     # Retrieval / routing
@@ -175,6 +180,8 @@ def get_settings() -> Settings:
         edgar_user_agent=_env("IL_EDGAR_USER_AGENT", "Recto research example@example.com"),
         seed_tickers=_env("IL_SEED_TICKERS", "AAPL,MSFT,NVDA,GOOGL,AMZN,META,TSLA,JPM,V,JNJ,WMT,LLY,NFLX"),
         seed_form=_env("IL_SEED_FORM", "10-K"),
+        auto_fetch=_env("IL_AUTO_FETCH", "1") == "1",
+        max_fetched=int(_env("IL_MAX_FETCHED", "16")),
         bootstrap=_env("IL_BOOTSTRAP", "live"),
         top_k=int(_env("IL_TOP_K", "5")),
         verify_min_confidence=float(_env("IL_VERIFY_MIN_CONFIDENCE", "0.6")),

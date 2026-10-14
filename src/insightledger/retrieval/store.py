@@ -39,31 +39,45 @@ class VectorStore(Protocol):
 @dataclass
 class MemoryStore:
     settings: Settings = field(default_factory=get_settings)
+    dim: Optional[int] = None            # expected vector width; None accepts any
     _vectors: dict[str, np.ndarray] = field(default_factory=dict)
     _payloads: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def upsert(self, key: str, vectors: np.ndarray, payload: dict[str, Any]) -> None:
-        self._vectors[key] = vectors.astype(np.float32)
+        # payload first: a reader that sees the vectors can always find it
         self._payloads[key] = payload
+        self._vectors[key] = vectors.astype(np.float32)
+
+    def delete_doc(self, doc_id: str) -> int:
+        """Drop every page of one filing; returns how many were removed."""
+        keys = [k for k, p in list(self._payloads.items()) if p.get("doc_id") == doc_id]
+        for k in keys:
+            self._vectors.pop(k, None)
+            self._payloads.pop(k, None)
+        return len(keys)
 
     def search(self, query_vectors: np.ndarray, top_k: int,
                doc_ids: Optional[list[str]] = None,
                weighting: str = "none") -> list[Hit]:
-        keys = [k for k, _ in self._vectors.items()
-                if not doc_ids or self._payloads[k].get("doc_id") in doc_ids]
+        # Snapshot first: an ingest may be adding pages on another thread, and
+        # iterating the live dict would raise "changed size during iteration".
+        vectors = dict(self._vectors)
+        payloads = self._payloads
+        keys = [k for k in vectors
+                if k in payloads and (not doc_ids or payloads[k].get("doc_id") in doc_ids)]
         if not keys:
             return []
         if weighting == "idf" and query_vectors.size:
             # (pages, query tokens): weight each token by how rare it is among
             # the pages in scope, so scoping to one filing re-weights correctly
-            best = np.stack([best_per_token(query_vectors, self._vectors[k]) for k in keys])
+            best = np.stack([best_per_token(query_vectors, vectors[k]) for k in keys])
             with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
                 scores = best @ idf_weights(best)   # same spurious macOS flag
             scores = np.nan_to_num(scores, nan=0.0, posinf=0.0, neginf=0.0)
         else:
-            scores = np.array([maxsim(query_vectors, self._vectors[k]) for k in keys])
+            scores = np.array([maxsim(query_vectors, vectors[k]) for k in keys])
         order = np.argsort(-scores, kind="stable")[:top_k]
-        return [Hit(key=keys[i], score=float(scores[i]), payload=self._payloads[keys[i]])
+        return [Hit(key=keys[i], score=float(scores[i]), payload=payloads[keys[i]])
                 for i in order]
 
     def count(self) -> int:
@@ -84,7 +98,14 @@ class MemoryStore:
         js = self._path.with_suffix(".json")
         if npz.exists() and js.exists():
             data = np.load(npz)
-            self._vectors = {k: data[k] for k in data.files}
+            vectors = {k: data[k] for k in data.files}
+            # An index saved by an embedder of another width cannot be
+            # searched with this one's queries; start empty and let the
+            # bootstrap rebuild it rather than crash on the first matmul.
+            if self.dim and any(v.ndim != 2 or v.shape[1] != self.dim for v in vectors.values()):
+                self._vectors, self._payloads = {}, {}
+                return
+            self._vectors = vectors
             self._payloads = json.loads(js.read_text(encoding="utf-8"))
 
 
@@ -149,6 +170,6 @@ def get_store(settings: Optional[Settings] = None, dim: int = 128) -> VectorStor
             return QdrantStore(s, dim=dim)
         except Exception:
             pass
-    store = MemoryStore(settings=s)
+    store = MemoryStore(settings=s, dim=dim)
     store.load()
     return store

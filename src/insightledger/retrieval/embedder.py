@@ -21,7 +21,11 @@ import numpy as np
 from ..config import Settings, get_settings
 from ..schemas import Page
 
-_DIM = 128
+# Hashed stub vectors only need to tell "the same word" from "a different
+# word": an exact match scores 1.0, the best random overlap across a page about
+# 0.4. 64 dimensions keeps that margin and halves the index (155 MB -> 77 MB
+# for thirteen 10-Ks), which is what lets a 512 MB server hold more filings.
+_DIM = 64
 _TOK = re.compile(r"[A-Za-z0-9%$.\-]+")
 
 

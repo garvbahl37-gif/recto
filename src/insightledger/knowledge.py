@@ -12,7 +12,10 @@ the app.)
 from __future__ import annotations
 
 import json
-from typing import Optional
+import re
+import threading
+import time
+from typing import Callable, Optional
 
 from .config import Settings, get_settings
 from .ingestion import EdgarClient
@@ -59,6 +62,84 @@ def load_registry(s: Optional[Settings] = None) -> dict[str, Document]:
     return reg
 
 
+# ------------------------------------------------- fetched-filing budget ----
+
+_LAST_USED: dict[str, float] = {}
+_FETCH_LOCK = threading.Lock()
+_FORM = re.compile(r"-(10-K|10-Q|8-K|20-F|40-F|DEF 14A)-\d{4}-\d{2}-\d{2}$")
+
+
+def _ticker(doc_id: str) -> str:
+    m = _FORM.search(doc_id)
+    return doc_id[: m.start()] if m else doc_id.split("-")[0]
+
+
+def touch(doc_ids) -> None:
+    """Record that these filings were just read (for least-recently-used eviction)."""
+    now = time.time()
+    for d in doc_ids:
+        _LAST_USED[d] = now
+
+
+def evict_over_budget(settings: Optional[Settings] = None,
+                      retriever: Optional[Retriever] = None) -> list[str]:
+    """Drop the least recently read fetched filings once there are more than
+    `max_fetched` of them. Seeds are never evicted. On a 512 MB server this is
+    what lets anyone ask about any company without the index outgrowing memory."""
+    s = settings or get_settings()
+    reg = load_registry(s)
+    seeds = {t.strip().upper() for t in s.seed_tickers.split(",") if t.strip()}
+    fetched = [d for d in reg if _ticker(d).upper() not in seeds]
+    over = len(fetched) - max(0, s.max_fetched)
+    if over <= 0:
+        return []
+    victims = sorted(fetched, key=lambda d: _LAST_USED.get(d, 0.0))[:over]
+    retriever = retriever or Retriever(settings=s)
+    for d in victims:
+        retriever.store.delete_doc(d)
+        _LAST_USED.pop(d, None)
+    retriever.store.save()
+    save_registry([v for k, v in reg.items() if k not in victims], s)
+    return victims
+
+
+def fetch_for_question(question: str, retriever: Retriever,
+                       settings: Optional[Settings] = None,
+                       emit: Optional[Callable[..., None]] = None) -> list[str]:
+    """Fetch the filings of EDGAR companies a question names but Recto has not
+    read, and return the doc_ids to scope the question to. Reports progress
+    through `emit(stage, **payload)`: fetch, then fetched or fetch_failed."""
+    from .agents.entities import edgar_companies_in
+
+    s = settings or get_settings()
+    say = emit or (lambda *a, **k: None)
+    try:
+        companies = EdgarClient(s)._load_companies()
+    except Exception:  # noqa: BLE001 — no EDGAR list, no fetch; answer from the shelf
+        return []
+    found = edgar_companies_in(question, companies)
+    out: list[str] = []
+    for c in found:
+        tk, name = c["ticker"], c["title"]
+        with _FETCH_LOCK:          # two questions about the same new company fetch once
+            have = [d for d in load_registry(s) if _ticker(d).upper() == tk.upper()]
+            if have:
+                out += have
+                continue
+            say("fetch", ticker=tk, company=name)
+            t0 = time.time()
+            try:
+                doc = ingest_ticker(tk, settings=s, retriever=retriever)
+            except Exception as exc:  # noqa: BLE001
+                say("fetch_failed", ticker=tk, company=name, message=str(exc)[:240])
+                continue
+            say("fetched", ticker=tk, company=name, doc_id=doc.doc_id, form=doc.doc_type,
+                pages=len(doc.pages), seconds=round(time.time() - t0, 1))
+            out.append(doc.doc_id)
+    touch(out)
+    return out
+
+
 def ingest_ticker(ticker: str, form: str = "10-K",
                   settings: Optional[Settings] = None,
                   retriever: Optional[Retriever] = None) -> Document:
@@ -72,6 +153,8 @@ def ingest_ticker(ticker: str, form: str = "10-K",
     reg = dict(load_registry(s))
     reg[doc.doc_id] = doc
     save_registry(list(reg.values()), s)
+    touch([doc.doc_id])
+    evict_over_budget(s, retriever)
     return doc
 
 
@@ -85,6 +168,7 @@ def ingest_filing(ticker: str, accession: str, primary_doc: str, form: str,
     doc = EdgarClient(s).fetch_specific(ticker, accession, primary_doc, form, date)
     Indexer(embedder=retriever.embedder, store=retriever.store,
             settings=s).index_documents([doc])
+    touch([doc.doc_id])
     reg = dict(load_registry(s))
     reg[doc.doc_id] = doc
     save_registry(list(reg.values()), s)

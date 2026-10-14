@@ -335,11 +335,55 @@ class EdgarClient:
             "tickers": sub.get("tickers", []), "filings": filings,
         }
 
+    # Forms whose substance is filed as exhibits: an 8-K's earnings release is
+    # Exhibit 99.1, and a 40-F attaches the annual report and financials.
+    _EXHIBIT_FORMS = {"8-K", "8-K/A", "6-K", "6-K/A", "40-F", "40-F/A"}
+    # Never content: auditor consents (23), SOX certifications (31, 32),
+    # clawback policies (97), XBRL (101, 104), viewer pages, indexes, and the
+    # full-submission text file (named for the accession number).
+    _BOILERPLATE = re.compile(
+        r"(?:ex|exhibit)[-_ ]?(?:23|31|32|97|101|104)(?!\d)|^r\d+\.htm$|index|\d{10}-\d{2}-\d{6}",
+        re.I)
+    # An 8-K or 6-K carries its release as Exhibit 99.
+    _RELEASE = re.compile(r"(?:ex|exhibit)[-_ ]?99|dex99", re.I)
+    # A 40-F carries its annual information form, statements and MD&A as
+    # Exhibits 1.x or 99.x, or as supplementary documents (name_d2.htm).
+    _ANNUAL = re.compile(r"(?:ex|exhibit)[-_ ]?(?:99|1[1-3])|dex99|_d\d+\.htm$", re.I)
+
+    def _exhibit_texts(self, meta: dict, limit: int = 4,
+                       max_chars: int = 900_000) -> list[tuple[str, str]]:
+        """(name, text) of the documents that carry a filing's substance."""
+        base = _ARCHIVE.format(cik=meta["cik"], acc=meta["accession"], doc="")
+        try:
+            items = self._get(base + "index.json").json()["directory"]["item"]
+        except Exception:  # noqa: BLE001 — no index, read the main document alone
+            return []
+        wanted = self._ANNUAL if meta["form"].upper().startswith("40-F") else self._RELEASE
+        out, total = [], 0
+        for it in items:
+            name = str(it.get("name", ""))
+            if (name == meta["primary_doc"] or not name.lower().endswith((".htm", ".html", ".txt"))
+                    or self._BOILERPLATE.search(name) or not wanted.search(name)):
+                continue
+            try:
+                text = self._to_text(self._get(base + name).text)
+            except Exception:  # noqa: BLE001
+                continue
+            out.append((name, text))
+            total += len(text)
+            if len(out) >= limit or total >= max_chars:
+                break
+        return out
+
     def _build(self, label: str, meta: dict, max_pages: int) -> Document:
         url = _ARCHIVE.format(cik=meta["cik"], acc=meta["accession"],
                               doc=meta["primary_doc"])
         html = self._get(url).text
-        pages = self._paginate(self._to_text(html), max_pages=max_pages)
+        text = self._to_text(html)
+        if meta["form"].upper() in self._EXHIBIT_FORMS:
+            for name, body in self._exhibit_texts(meta):
+                text += f"\n\nExhibit {name}\n{body}"
+        pages = self._paginate(text, max_pages=max_pages)
         actual = meta["form"]
         doc = build_document_from_pages(
             doc_id=f"{label.upper()}-{actual}-{meta['date']}",

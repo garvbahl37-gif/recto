@@ -14,6 +14,7 @@ def _isolated_data(tmp_path_factory):
     os.environ["IL_VECTOR_STORE"] = "memory"
     os.environ["IL_LLM"] = "stub"
     os.environ["IL_BOOTSTRAP"] = "sample"   # offline fixture, no EDGAR network
+    os.environ["IL_AUTO_FETCH"] = "0"       # never reach EDGAR from a test
     # clear cached settings
     from insightledger.config import get_settings
     get_settings.cache_clear()

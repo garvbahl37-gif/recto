@@ -60,6 +60,10 @@ const STAGES = [
 function detail(stage, ev, nameOf) {
   if (!ev) return "";
   switch (stage) {
+    case "fetch":
+      return ev.stage === "fetch_failed"
+        ? `Could not fetch ${tidyName(ev.company)}: ${ev.message}`
+        : `${possessive(tidyName(ev.company))} ${ev.form}, ${ev.pages} pages, in ${ev.seconds} s`;
     case "router": {
       const depth = ev.difficulty === "complex"
         ? `needs reasoning across pages, so ${ev.top_k} pages` : `a lookup, so ${ev.top_k} pages`;
@@ -89,6 +93,9 @@ function detail(stage, ev, nameOf) {
 
 /** The pipeline as it runs. Each stage is ticked off when its event arrives —
  *  real progress from the server, not a timer. */
+const tidyName = (s) => (s || "").toLowerCase().replace(/\s*\/.*$/, "")
+  .replace(/\b(inc|corp|co|ltd|plc)\.?$/, "").trim().replace(/\b([a-z])/g, (c) => c.toUpperCase());
+
 export function Stages({ events, started, nameOf }) {
   const last = {}, at = {};
   let retries = 0;
@@ -97,11 +104,16 @@ export function Stages({ events, started, nameOf }) {
     at[e.stage] = e.t;
     if (e.stage === "retry") retries = e.attempt;
   }
-  const doneCount = STAGES.findIndex(([k]) => !last[k]);
-  const current = doneCount === -1 ? STAGES.length : doneCount;
+  // A company that is not on the shelf yet gets fetched before anything else.
+  const fetching = last.fetch || last.fetched || last.fetch_failed;
+  const stages = fetching ? [["fetch", "Fetch the filing from EDGAR"], ...STAGES] : STAGES;
+  if (last.fetched || last.fetch_failed) { last.fetch = last.fetched || last.fetch_failed; at.fetch = at.fetched || at.fetch_failed; }
+  else if (fetching) delete last.fetch;              // started, not finished
+  const doneCount = stages.findIndex(([k]) => !last[k]);
+  const current = doneCount === -1 ? stages.length : doneCount;
   return (
     <ol className="stages" aria-live="polite">
-      {STAGES.map(([key, label], i) => {
+      {stages.map(([key, label], i) => {
         const done = !!last[key];
         const live = i === current;
         return (

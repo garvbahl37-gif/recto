@@ -349,6 +349,10 @@ class OllamaProvider:
             # models like to restate each bullet as its own lead sentence.
         if not bullets and lede and _CITE.search(lede):
             bullets, lede = ["- " + lede], None      # one cited sentence is an answer
+        if lede:
+            bare = lambda t: re.sub(r"\W+", " ", _CITE.sub("", t)).strip().lower()
+            if any(bare(b.lstrip("- ")) == bare(lede) for b in bullets):
+                lede = None                          # a lead that only repeats a bullet
         if not bullets:
             log.warning("synthesis kept no cited lines; using the stub's wording")
             return self.stub.synthesize(question, claims, meter)

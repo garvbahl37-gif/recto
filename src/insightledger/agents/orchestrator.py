@@ -65,11 +65,19 @@ class Orchestrator:
             # right line item from the wrong company.
             scoped: list[str] = []
             if not state.get("doc_ids"):
-                from ..knowledge import load_registry
+                from ..knowledge import fetch_for_question, load_registry, touch
                 from .entities import companies_in
                 scoped = companies_in(state["question"], load_registry(self.s))
+                # Live corpus only: fetching into the labelled eval fixture
+                # would change what the golden set is scored against.
+                if not scoped and self.s.auto_fetch and self.s.bootstrap != "sample":
+                    # Not on the shelf: fetch it from EDGAR, then answer.
+                    scoped = fetch_for_question(
+                        state["question"], self.retriever, self.s,
+                        emit=lambda stage, **p: _emit(state, stage, **p))
                 if scoped:
                     state["doc_ids"] = scoped
+                    touch(scoped)
             state["log"].append(f"router: difficulty={difficulty.value} top_k={k}"
                                 + (f" scoped={scoped}" if scoped else ""))
         _emit(state, "router", difficulty=difficulty.value, top_k=k, scoped=scoped)

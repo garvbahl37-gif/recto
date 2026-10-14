@@ -26,6 +26,7 @@ export default function Console({ isDark, toggleTheme }) {
   const [modal, setModal] = useState(null);
   const [toast, setToast] = useState(null);
   const inflight = useRef(null);
+  const fetchedNow = useRef(false);
 
   const flash = (msg, err) => { setToast({ msg, err }); setTimeout(() => setToast(null), 3400); };
   const load = useCallback(async () => {
@@ -62,8 +63,12 @@ export default function Console({ isDark, toggleTheme }) {
         const e = { ...ev, t: performance.now() };
         setEvents((es) => [...es, e]);
         if (ev.stage === "retriever") setPulled(ev.pages);
+        if (ev.stage === "fetched") fetchedNow.current = true;
       }, ac.signal);
       if (ac.signal.aborted) return;
+      // a filing fetched for this question joins the shelf before the answer
+      // lands, so its name and page links resolve
+      if (fetchedNow.current) { fetchedNow.current = false; await load(); }
       setAnswer(a);
       setPhase("done");
       setActiveNote(buildNotes(a).notes[0]?.key || null);
@@ -81,7 +86,8 @@ export default function Console({ isDark, toggleTheme }) {
   if (showShelf || phase === "idle") {
     recto = <RectoShelf filings={filings} scope={scope} onScope={pickScope} onPick={setModal} />;
   } else if (phase === "reading") {
-    recto = <RectoReading pages={pulled} nameOf={nameOf} />;
+    const f = [...events].reverse().find((e) => e.stage === "fetch" || e.stage === "fetched");
+    recto = <RectoReading pages={pulled} nameOf={nameOf} fetching={f?.stage === "fetch" ? f : null} />;
   } else if (answer?.citations?.length) {
     recto = <RectoSource answer={answer} activeNote={activeNote} onNote={openNote} nameOf={nameOf} />;
   } else {
