@@ -73,10 +73,13 @@ _FETCH_WINDOW = 600.0                    # seconds
 def reserve_fetch(settings: Optional[Settings] = None) -> tuple[Optional[str], Optional[float]]:
     """Claim one EDGAR fetch from the service-wide allowance.
 
-    Returns (refusal, slot): refusal is None when the fetch may go ahead, and
-    slot must be handed to release_fetch() if the fetch then fails, so a bad
-    request cannot spend the allowance everyone shares. Every path that pulls
-    a filing from EDGAR on a visitor's behalf goes through here.
+    Returns (refusal, slot); refusal is None when the fetch may go ahead.
+    A slot is spent once a request reaches EDGAR, whether or not the fetch
+    then succeeds: refunding failures would let anyone make unlimited EDGAR
+    requests by choosing companies that fail. Callers reject an unknown ticker
+    against the cached list before reserving, so a bad request costs nothing.
+    Every path that pulls a filing from EDGAR on a visitor's behalf goes
+    through here.
     """
     s = settings or get_settings()
     now = time.time()
@@ -91,7 +94,7 @@ def reserve_fetch(settings: Optional[Settings] = None) -> tuple[Optional[str], O
 
 
 def release_fetch(slot: Optional[float]) -> None:
-    """Give back a slot whose fetch failed."""
+    """Give back a slot that never reached EDGAR (nothing was fetched)."""
     if slot is None:
         return
     with _FETCH_LOCK:
@@ -167,8 +170,7 @@ def fetch_for_question(question: str, retriever: Retriever,
             t0 = time.time()
             try:
                 doc = ingest_ticker(tk, settings=s, retriever=retriever)
-            except Exception as exc:  # noqa: BLE001
-                release_fetch(slot)
+            except Exception as exc:  # noqa: BLE001 — reached EDGAR, so the slot is spent
                 say("fetch_failed", ticker=tk, company=name, message=str(exc)[:240])
                 continue
             say("fetched", ticker=tk, company=name, doc_id=doc.doc_id, form=doc.doc_type,

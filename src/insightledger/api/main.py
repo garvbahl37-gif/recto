@@ -192,7 +192,7 @@ def ingest(req: IngestRequest) -> dict:
     or one specific filing when an accession is supplied (company browser)."""
     tk = req.ticker.strip().upper()
     from ..ingestion import EdgarClient
-    from ..knowledge import release_fetch, reserve_fetch
+    from ..knowledge import reserve_fetch
 
     # Check the company exists before spending from the shared allowance (the
     # ticker list is cached, so this costs no request to EDGAR); otherwise a
@@ -203,7 +203,7 @@ def ingest(req: IngestRequest) -> dict:
         raise HTTPException(404, str(exc))
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(502, f"EDGAR company list unavailable: {exc}")
-    refusal, slot = reserve_fetch()
+    refusal, _slot = reserve_fetch()
     if refusal:
         raise HTTPException(429, refusal)
     try:
@@ -212,8 +212,7 @@ def ingest(req: IngestRequest) -> dict:
                                 req.date, retriever=_orchestrator().retriever)
         else:
             doc = ingest_ticker(tk, form=req.form, retriever=_orchestrator().retriever)
-    except Exception as exc:  # noqa: BLE001
-        release_fetch(slot)
+    except Exception as exc:  # noqa: BLE001 — it reached EDGAR, so the slot stays spent
         raise HTTPException(502, f"EDGAR ingest failed: {exc}")
     return {"doc_id": doc.doc_id, "title": doc.title, "pages": len(doc.pages),
             "source": doc.source, "sections": sorted(

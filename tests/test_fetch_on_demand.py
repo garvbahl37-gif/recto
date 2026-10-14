@@ -104,9 +104,10 @@ def test_fetches_are_rate_limited_across_the_service(env):
     assert any(st == "fetch_failed" and "limit" in p["message"].lower() for st, p in events)
 
 
-def test_a_failed_fetch_gives_its_allowance_back(env, monkeypatch):
-    """A fetch that fails (no annual report, EDGAR down) must not use up the
-    shared allowance, or a handful of bad requests locks everyone out."""
+def test_a_fetch_that_reached_edgar_spends_its_slot_even_if_it_fails(env, monkeypatch):
+    """Refunding failures was itself a bypass: anyone could make unlimited EDGAR
+    requests by asking about companies whose fetch fails (funds with no 10-K).
+    A request that reaches EDGAR counts, whatever happens next."""
     s, r, fetched = env
     s2 = replace(s, max_fetched=50, fetch_rate=1)
     knowledge._FETCH_TIMES.clear()
@@ -114,8 +115,12 @@ def test_a_failed_fetch_gives_its_allowance_back(env, monkeypatch):
     def broken(*a, **k):
         raise ValueError("no annual report on EDGAR")
     monkeypatch.setattr(knowledge, "ingest_ticker", broken)
+    events = []
     knowledge.fetch_for_question("What was Coca-Cola's revenue?", r, s2)
-    assert knowledge._FETCH_TIMES == [], "the failed fetch kept its slot"
+    knowledge.fetch_for_question("What was PepsiCo's revenue?", r, s2,
+                                 emit=lambda st, **p: events.append((st, p)))
+    assert len(knowledge._FETCH_TIMES) == 1
+    assert any(st == "fetch_failed" and "limit" in p["message"].lower() for st, p in events)
 
 
 def test_ingest_endpoint_rejects_unknown_tickers_without_spending_a_slot(monkeypatch):
