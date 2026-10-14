@@ -171,7 +171,9 @@ class OllamaProvider:
             "You read pages from SEC filings and extract atomic factual claims that "
             "answer the question. Use only what is printed on the pages. Restate "
             "printed figures with their period and units; never compute a number "
-            "that is not printed. Each claim must carry a verbatim quote copied "
+            "that is not printed. A figure in a table takes the unit its heading "
+            "gives (\"in millions\", \"shares in thousands\"): state that unit with "
+            "it. Each claim must carry a verbatim quote copied "
             "exactly from its page. If the pages do not answer the question, return "
             'an empty list. Respond with JSON only: {"claims":[{"text":"...",'
             '"doc_id":"...","page":0,"quote":"..."}]} with at most 6 claims.'
@@ -256,11 +258,13 @@ class OllamaProvider:
             "claim ONLY against the page it cites; never support a claim with another "
             "page, because its footnote will point to the page it cites. For each claim "
             "decide two things separately: supported — the cited page states it, with "
-            "matching figures, periods and units; responsive — it helps answer the "
-            "question. A true statement that does not address the question is not "
-            "responsive. Default to false when uncertain. Respond "
-            'with JSON only: {"verdicts":[{"i":0,"supported":true,"responsive":true,'
-            '"confidence":0.0,"note":"..."}]}'
+            "matching figures, periods and units (a figure from a table headed \"in "
+            "thousands\" or \"in millions\" must say so); responsive — it helps answer "
+            "the question. A true statement that does not address the question is not "
+            "responsive. Default to false when uncertain. confidence is how sure you "
+            "are, from 0 to 1, that the claim is both supported and responsive. "
+            'Respond with JSON only: {"verdicts":[{"i":0,"supported":true,'
+            '"responsive":true,"confidence":0.9,"note":"..."}]}'
         )
         user = (f"Question: {question}\n\nClaims:\n{claim_block}\n\n"
                 f"Cited pages:\n{page_block}\n\nJSON only.")
@@ -293,7 +297,10 @@ class OllamaProvider:
                 results[i] = (False, round(conf * 0.4, 3),
                               note or "on the page but does not answer the question")
             else:
-                results[i] = (True, round(conf, 3), note or "agreed to the cited page")
+                # Supported and responsive with no confidence is the model echoing
+                # a template, not doubt: the quote is already on the page.
+                results[i] = (True, round(conf if conf > 0 else 0.8, 3),
+                              note or "agreed to the cited page")
         return results  # type: ignore[return-value]
 
     def verify_claim(self, question: str, claim: Claim, pages: list[RetrievedPage],
@@ -349,10 +356,24 @@ class OllamaProvider:
             # models like to restate each bullet as its own lead sentence.
         if not bullets and lede and _CITE.search(lede):
             bullets, lede = ["- " + lede], None      # one cited sentence is an answer
-        if lede:
-            bare = lambda t: re.sub(r"\W+", " ", _CITE.sub("", t)).strip().lower()
-            if any(bare(b.lstrip("- ")) == bare(lede) for b in bullets):
-                lede = None                          # a lead that only repeats a bullet
+        bare = lambda t: re.sub(r"\W+", " ", _CITE.sub("", t)).strip().lower()
+        # The same statement found on two pages (the income statement and the
+        # MD&A both print the year's revenue) is one line with two footnotes.
+        lines: list[str] = []
+        seen: dict[str, int] = {}
+        for b in bullets:
+            k = bare(b.lstrip("- "))
+            if k in seen:
+                j = seen[k]
+                for m in _CITE.finditer(b):
+                    if m.group(0) not in lines[j]:
+                        lines[j] += " " + m.group(0)
+                continue
+            seen[k] = len(lines)
+            lines.append(b)
+        bullets = lines
+        if lede and any(bare(b.lstrip("- ")) == bare(lede) for b in bullets):
+            lede = None                              # a lead that only repeats a bullet
         if not bullets:
             log.warning("synthesis kept no cited lines; using the stub's wording")
             return self.stub.synthesize(question, claims, meter)

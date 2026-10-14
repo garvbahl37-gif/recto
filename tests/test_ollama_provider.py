@@ -193,3 +193,23 @@ def test_a_lead_that_repeats_its_only_bullet_is_dropped():
             f"- Starbucks operated 40,990 stores. [{DOC} p.50]")
     out, _ = _provider(FakeSession(text)).synthesize("How many stores?", [c], CostMeter())
     assert out.count("40,990") == 1, out
+
+
+def test_the_same_statement_from_two_pages_is_one_line_with_two_footnotes():
+    a = _claim(); a.verified = True
+    b = _claim(); b.verified = True
+    b.citations[0].page_number = 59
+    text = (f"NVIDIA's revenue grew.\n- Total revenue was $215,938 million. [{DOC} p.50]\n"
+            f"- Total revenue was $215,938 million. [{DOC} p.59]")
+    out, _ = _provider(FakeSession(text)).synthesize("Revenue?", [a, b], CostMeter())
+    assert out.count("215,938") == 1, out
+    assert f"[{DOC} p.50]" in out and f"[{DOC} p.59]" in out, out
+
+
+def test_a_verdict_that_agrees_but_echoes_a_zero_confidence_still_counts():
+    c = _claim()
+    verdict = json.dumps({"verdicts": [{"i": 0, "supported": True, "responsive": True,
+                                        "confidence": 0.0, "note": "matches"}]})
+    [(ok, conf, _)] = _provider(FakeSession(verdict)).verify_claims(
+        "What was revenue?", [c], _pages(), CostMeter())
+    assert ok and conf > 0.5, "a zero would send a grounded answer round the retry loop"
