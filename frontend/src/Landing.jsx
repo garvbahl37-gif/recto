@@ -27,7 +27,7 @@ const RESULTS = [
   ["Answers with an invented fact", "0.188", "0.000"],
 ];
 
-/* NVIDIA's geographic revenue table, as printed on page 69 (in millions). */
+/* NVIDIA's geographic revenue table, as printed on page 101 (in millions). */
 const TABLE = [
   ["United States", "149,617", "77,482", "31,533"],
   ["Taiwan", "42,345", "23,600", "14,912"],
@@ -85,9 +85,12 @@ export default function Landing({ isDark, toggleTheme, onOpen }) {
               <a className="btn btn-ink" href="/app" onClick={open}>Open Recto</a>
               <a className="btn btn-line" href={REPO} target="_blank" rel="noreferrer">Read the source</a>
             </div>
-            <p className="hero-small num">{shelf.length} companies on the shelf, {pages.toLocaleString()} pages. No sign-up.</p>
+            <p className="hero-small num">
+              {shelf.length} companies read, {pages.toLocaleString()} pages, and any other SEC filer on
+              request. No sign-up.
+            </p>
           </div>
-          <span className="folio num">68</span>
+          <span className="folio num">{NVDA_PAGE.page_number - 1}</span>
         </div>
         <div className="page recto">
           <div className="hero-recto">
@@ -112,7 +115,7 @@ export default function Landing({ isDark, toggleTheme, onOpen }) {
         </div>
         <div className="pair">
           <figure className="sheet">
-            <figcaption className="sheet-cap">As NVIDIA printed it, page 69</figcaption>
+            <figcaption className="sheet-cap">As NVIDIA printed it, page {NVDA_PAGE.page_number}</figcaption>
             <table className="ftable">
               <thead>
                 <tr><th>In millions</th><th>Jan 25, 2026</th><th>Jan 26, 2025</th><th>Jan 28, 2024</th></tr>
@@ -265,8 +268,10 @@ export default function Landing({ isDark, toggleTheme, onOpen }) {
         <div className="sec-grid">
           <h2 className="sec-h">On the shelf.</h2>
           <p className="sec-p">
-            Thirteen annual reports, every page indexed. Inside Recto you can add any company that
-            files with the SEC; it pulls the filing from EDGAR and reads all of it.
+            {shelf.length === 30 ? "Thirty" : shelf.length} annual reports, read cover to cover. The
+            other 8,000 companies that file with the SEC under a ticker are one question away: name
+            one and Recto fetches its annual report from EDGAR and reads every page before it
+            answers. Inside, you can browse them all from A to Z.
           </p>
         </div>
         <div className="shelf-wrap sheet">

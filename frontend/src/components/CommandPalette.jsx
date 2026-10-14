@@ -5,7 +5,7 @@ import { displayName } from "../lib/names.js";
 
 const tidy = (s) => (s || "").toLowerCase().replace(/\b([a-z])/g, (m) => m.toUpperCase());
 
-export default function CommandPalette({ open, onClose, filings, onScope, onAsk, onPick, onTheme }) {
+export default function CommandPalette({ open, onClose, filings, onScope, onAsk, onPick, onTheme, onBrowse }) {
   const [q, setQ] = useState("");
   const [hits, setHits] = useState([]);
   const [hl, setHl] = useState(0);
@@ -33,6 +33,8 @@ export default function CommandPalette({ open, onClose, filings, onScope, onAsk,
     QUESTIONS.filter(({ q: t }) => !ql || t.toLowerCase().includes(ql))
       .forEach(({ q: t }) => list.push({ group: "Ask", a: "Ask", b: t, run: () => onAsk(t) }));
     hits.forEach((h) => list.push({ group: "Add from EDGAR", a: h.ticker, b: tidy(h.title), run: () => onPick(h.ticker) }));
+    if (!ql || "browse every company index a to z directory all companies".includes(ql))
+      list.push({ group: "Browse", a: "A to Z", b: "Every company that files with the SEC", run: onBrowse });
     if (!ql || "theme dark light".includes(ql)) list.push({ group: "View", a: "Theme", b: "Switch between light and dark", run: onTheme });
     return list;
   }, [q, filings, hits]); // eslint-disable-line react-hooks/exhaustive-deps

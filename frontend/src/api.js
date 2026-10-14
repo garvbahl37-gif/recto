@@ -53,7 +53,8 @@ export const api = {
   health: () => j("/health"),
   documents: () => j("/documents"),
   page: (docId, n) => j(`/documents/${encodeURIComponent(docId)}/pages/${n}`),
-  tickers: (q) => j("/tickers?q=" + encodeURIComponent(q) + "&limit=10"),
+  tickers: (q, limit = 10) => j("/tickers?q=" + encodeURIComponent(q) + "&limit=" + limit),
+  companies: () => j("/companies"),
   company: (ticker, forms = "", limit = 40) =>
     j(`/company?ticker=${encodeURIComponent(ticker)}&forms=${encodeURIComponent(forms)}&limit=${limit}`),
   ask,

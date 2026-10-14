@@ -6,6 +6,7 @@ import { Icon } from "./icons.jsx";
 import Wordmark from "./components/Wordmark.jsx";
 import { AnswerSheet, AskSheet, Stages, nameOfFactory } from "./components/Verso.jsx";
 import { RectoReading, RectoShelf, RectoSource } from "./components/Recto.jsx";
+import { RectoIndex } from "./components/CompanyIndex.jsx";
 import CommandPalette from "./components/CommandPalette.jsx";
 import CompanyModal from "./components/CompanyModal.jsx";
 
@@ -21,6 +22,7 @@ export default function Console({ isDark, toggleTheme }) {
   const [answer, setAnswer] = useState(null);
   const [activeNote, setActiveNote] = useState(null);
   const [showShelf, setShowShelf] = useState(false);
+  const [showIndex, setShowIndex] = useState(false);
   const [view, setView] = useState("verso");           // narrow screens: which page
   const [cmd, setCmd] = useState(false);
   const [modal, setModal] = useState(null);
@@ -57,7 +59,7 @@ export default function Console({ isDark, toggleTheme }) {
       : scope ? [scope] : null;
     const t0 = performance.now();
     setQ(question); setPhase("reading"); setEvents([]); setPulled([]); setAnswer(null);
-    setActiveNote(null); setShowShelf(false); setStarted(t0); setView("verso");
+    setActiveNote(null); setShowShelf(false); setShowIndex(false); setStarted(t0); setView("verso");
     try {
       const a = await api.ask(question, docIds, (ev) => {
         const e = { ...ev, t: performance.now() };
@@ -79,12 +81,17 @@ export default function Console({ isDark, toggleTheme }) {
     }
   };
 
-  const openNote = (key) => { setActiveNote(key); setShowShelf(false); setView("recto"); };
-  const pickScope = (docId) => { setScope(docId); setShowShelf(false); };
+  const openNote = (key) => { setActiveNote(key); setShowShelf(false); setShowIndex(false); setView("recto"); };
+  const pickScope = (docId) => { setScope(docId); setShowShelf(false); setShowIndex(false); };
+  const openIndex = () => { setShowIndex(true); setView("recto"); };
 
   let recto;
-  if (showShelf || phase === "idle") {
-    recto = <RectoShelf filings={filings} scope={scope} onScope={pickScope} onPick={setModal} />;
+  if (showIndex) {
+    recto = <RectoIndex filings={filings} onScope={(id) => { pickScope(id); setView("verso"); }}
+                        onPick={setModal} onClose={() => setShowIndex(false)} />;
+  } else if (showShelf || phase === "idle") {
+    recto = <RectoShelf filings={filings} scope={scope} onScope={pickScope} onPick={setModal}
+                        onBrowse={openIndex} />;
   } else if (phase === "reading") {
     const f = [...events].reverse().find((e) => e.stage === "fetch" || e.stage === "fetched");
     recto = <RectoReading pages={pulled} nameOf={nameOf} fetching={f?.stage === "fetch" ? f : null} />;
@@ -99,7 +106,7 @@ export default function Console({ isDark, toggleTheme }) {
     <div className="desk">
       <header className="desk-head">
         <Wordmark href="/" />
-        <button className="scope" onClick={() => { setShowShelf((s) => !s); setView("recto"); }}
+        <button className="scope" onClick={() => { setShowShelf((s) => !s); setShowIndex(false); setView("recto"); }}
                 aria-expanded={showShelf}>
           {scopeName ? `Reading ${possessive(scopeName)} ${scoped.doc_type}` : `Reading all ${filings.length} filings`}
         </button>
@@ -147,9 +154,11 @@ export default function Console({ isDark, toggleTheme }) {
       </main>
 
       <CommandPalette open={cmd} onClose={() => setCmd(false)} filings={filings}
-                      onScope={pickScope} onAsk={(t) => ask(t)} onPick={setModal} onTheme={toggleTheme} />
-      <CompanyModal ticker={modal} onClose={() => setModal(null)} onRead={pickScope}
-                    onIndexed={async (r) => { flash(`Indexed ${r.doc_id}, ${r.pages} pages`); await load(); }} />
+                      onScope={pickScope} onAsk={(t) => ask(t)} onPick={setModal} onTheme={toggleTheme}
+                      onBrowse={openIndex} />
+      <CompanyModal ticker={modal} onClose={() => setModal(null)}
+                    onRead={(id) => { pickScope(id); setView("verso"); }}
+                    onIndexed={async (r) => { flash(`${displayName({ doc_id: r.doc_id, title: r.title })}: read all ${r.pages} pages`); await load(); }} />
       {toast && <div className={"toast" + (toast.err ? " err" : "")} role="status">{toast.msg}</div>}
     </div>
   );

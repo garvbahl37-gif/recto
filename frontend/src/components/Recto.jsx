@@ -25,18 +25,22 @@ export function usePage(docId, n) {
 
 /* ------------------------------------------------------------- the shelf */
 
-export function RectoShelf({ filings, scope, onScope, onPick }) {
+export function RectoShelf({ filings, scope, onScope, onPick, onBrowse }) {
   return (
     <div className="recto-inner">
       <div className="running"><span>On the shelf</span><span>Filed with the SEC</span></div>
       <h2 className="recto-h">
-        {filings.length ? "Choose a filing, or ask across all of them." : "Nothing indexed yet."}
+        {filings.length ? "Choose a filing, or ask across all of them." : "Nothing read yet."}
       </h2>
       <Shelf filings={filings} active={scope} onPick={onScope} />
       <div className="add">
-        <p className="add-p">Ask about any company that files with the SEC and Recto fetches its
-          annual report first. To pick a particular filing, find the company here.</p>
+        <p className="add-p">Recto has read these. Ask about any other company that files with the
+          SEC and it fetches that company&rsquo;s annual report from EDGAR and reads it first. To
+          choose a particular filing, find the company here.</p>
         <CompanyPicker onSelect={onPick} />
+        <p className="add-browse">
+          <button type="button" className="link" onClick={onBrowse}>Browse every company, A to Z</button>
+        </p>
       </div>
     </div>
   );

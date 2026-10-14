@@ -105,6 +105,50 @@
 .thumb:hover { color: var(--ink); }
 .thumb.on { background: var(--paper); color: var(--pencil); }
 
+/* ------------------------------------------- the index of companies
+   Set like the index at the back of a book: two columns of names in the
+   filing's type, a dotted leader to the ticker, a display initial over each
+   letter, and thumb tabs down the fore-edge. Read companies carry the tick. */
+.add-browse { margin: 18px 0 0; font-size: var(--t-14); font-weight: 650; }
+.ix .recto-h { margin-bottom: 12px; }
+.ix .add-p { margin-bottom: 18px; }
+.ix-field { max-width: 420px; }
+.ix-sec { display: flex; align-items: baseline; gap: 14px; margin: 30px 0 4px;
+  border-bottom: 2px solid var(--ink); padding-bottom: 6px; scroll-margin-top: 20px; }
+.ix-initial { font-family: var(--display); font-weight: 860; font-size: 76px; line-height: .78; }
+.ix-count { font-size: var(--t-14); color: var(--ink-3); font-weight: 600; }
+.ix-page + .ix-page { margin-top: 22px; }
+.ix-guide { display: flex; justify-content: space-between; gap: 24px; margin: 12px 0 2px;
+  font-size: var(--t-12); font-weight: 600; color: var(--ink-3); }
+.ix-guide span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ix-list { list-style: none; margin: 0; padding: 0; columns: 2; column-gap: 40px; }
+.ix-list li { break-inside: avoid; }
+.ix-row { display: flex; align-items: baseline; gap: 6px; width: 100%; min-height: 34px;
+  padding: 6px 0; text-align: left; color: var(--ink); }
+.ix-name { font-family: var(--filing); font-size: 15px; line-height: 1.3; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ix-lead { flex: 1; min-width: 14px; border-bottom: 1.5px dotted var(--rule-hi); transform: translateY(-4px); }
+.ix-tk { font-size: var(--t-12); font-weight: 700; letter-spacing: .03em; color: var(--ink-3);
+  font-variant-numeric: tabular-nums; }
+.ix-row .mark-svg { align-self: center; flex: none; }
+.ix-row.read .ix-tk { color: var(--ink); }
+.ix-row:hover .ix-name { text-decoration: underline; text-decoration-thickness: 1px;
+  text-underline-offset: 3px; text-decoration-color: var(--ink-3); }
+.ix-row:hover .ix-lead { border-bottom-color: var(--ink-3); }
+.ix-hint { padding: 18px 0; }
+.ix-far { margin-top: 22px; font-size: var(--t-14); font-weight: 650; }
+.ix-far-h { font-family: var(--display); font-weight: 800; font-size: var(--t-24); margin: 10px 0 0; }
+
+/* letters: thumb tabs on the fore-edge on a desk, a rail under the field on a phone */
+.ix-edge { position: absolute; top: 0; bottom: 0; right: -34px; width: 34px; z-index: 3; }
+.ix-edge-tabs { position: sticky; top: 14px; display: flex; flex-direction: column; gap: 2px; padding-top: 30px; }
+.ix-tab { width: 34px; height: 21px; font-size: 12px; font-weight: 750; color: var(--ink-3);
+  background: var(--paper-2); box-shadow: 2px 1px 5px -3px rgba(0,0,0,.35);
+  transition: color .12s var(--ease), background .12s var(--ease); }
+.ix-tab:hover { color: var(--ink); }
+.ix-tab.on { background: var(--paper); color: var(--ink); box-shadow: 2px 1px 5px -3px rgba(0,0,0,.2); }
+.ix-rail { display: none; }
+
 /* catalogue rows that are not themselves buttons */
 .row-btn.static { cursor: default; }
 .row-btn.static:hover { background: none; }
@@ -137,4 +181,13 @@
   .imprint { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 20px; }
   .pull { grid-template-columns: minmax(0, 1fr); gap: 4px; }
   .folio { display: none; }
+  .ix-edge { display: none; }
+  .ix-rail { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 14px; }
+  .ix-rail .ix-tab { width: 36px; height: 36px; box-shadow: none; border: 1px solid var(--rule);
+    background: var(--paper); font-size: var(--t-14); }
+  .ix-rail .ix-tab.on { border-color: var(--ink); box-shadow: inset 0 -2px 0 var(--ink); }
+  .ix-list { columns: 1; }
+  .ix-row { min-height: 44px; }
+  .ix-initial { font-size: 60px; }
+  .ix-sec { scroll-margin-top: 64px; }            /* clear of the sticky page tabs */
 }

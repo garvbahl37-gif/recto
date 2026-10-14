@@ -42,8 +42,11 @@
 }
 
 /* ---------- the filing page, in the filing's own type ---------- */
+/* pre-line: a filing's lines come through as printed, so each row of a
+   statement stays on its own line instead of running into the next */
 .filing-text { font-family: var(--filing); font-size: 11.5px; line-height: 1.42; color: var(--ink);
-  text-align: justify; hyphens: auto; -webkit-hyphens: auto; word-break: break-word; margin: 0; }
+  text-align: justify; hyphens: auto; -webkit-hyphens: auto; word-break: break-word; margin: 0;
+  white-space: pre-line; }
 .filing-text mark { background: none; color: inherit; }
 .filing-text .dim { color: var(--ink-3); }
 .quote { font-family: var(--filing); font-size: var(--t-18); line-height: 1.5; color: var(--ink); }

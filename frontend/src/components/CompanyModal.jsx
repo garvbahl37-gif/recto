@@ -5,7 +5,7 @@ import { filedOn } from "../lib/names.js";
 const FORM_SETS = { Annual: "10-K,20-F,40-F", Quarterly: "10-Q", Events: "8-K", Proxy: "DEF 14A", All: "" };
 const tidy = (s) => (s || "").toLowerCase().replace(/\b([a-z])/g, (m) => m.toUpperCase());
 
-/** A catalogue card for one company: its filings, any of which can be indexed. */
+/** A catalogue card for one company: its filings, any of which Recto can read. */
 export default function CompanyModal({ ticker, onClose, onIndexed, onRead }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
@@ -40,7 +40,7 @@ export default function CompanyModal({ ticker, onClose, onIndexed, onRead }) {
       onIndexed?.(r);
       setData((d) => ({ ...d, filings: d.filings.map((x) =>
         x.accession === f.accession ? { ...x, indexed: true, doc_id: r.doc_id } : x) }));
-    } catch (e) { setErr(`Indexing failed: ${e.message}`); }
+    } catch (e) { setErr(`Reading failed: ${e.message}`); }
     finally { setBusy(null); }
   };
 
@@ -70,14 +70,14 @@ export default function CompanyModal({ ticker, onClose, onIndexed, onRead }) {
               {f.indexed ? (
                 <button className="link" onClick={() => { onRead?.(f.doc_id); onClose(); }}>Ask it</button>
               ) : busy === f.accession ? (
-                <span className="r-c">Indexing</span>
+                <span className="r-c">Reading every page</span>
               ) : (
-                <button className="link" disabled={!!busy} onClick={() => index(f)}>Index</button>
+                <button className="link" disabled={!!busy} onClick={() => index(f)}>Read</button>
               )}
             </div>
           ))}
         </div>
-        <div className="card-foot">Straight from SEC EDGAR. Indexing reads every page of the filing.</div>
+        <div className="card-foot">Straight from SEC EDGAR. Recto reads every page of a filing before you ask it anything.</div>
       </div>
     </div>
   );
