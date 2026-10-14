@@ -61,3 +61,20 @@ def test_router_reads_only_the_named_company():
     router = dict(seen)["router"]
     assert router["scoped"] == ["ACME-10K-2024"]
     assert {p.doc_id for p in ans.retrieved} == {"ACME-10K-2024"}
+
+
+def test_companies_are_found_by_the_names_people_use():
+    from insightledger.agents.entities import companies_in
+
+    class D:
+        def __init__(self, name):
+            self.metadata, self.title = {"name": name}, name
+    reg = {"BAC-10-K-2026-02-25": D("BANK OF AMERICA CORP /DE/"),
+           "DIS-10-K-2025-11-13": D("Walt Disney Co"),
+           "MCD-10-K-2026-02-24": D("MCDONALDS CORP"),
+           "PEP-10-K-2026-02-03": D("PEPSICO INC"),
+           "PG-10-K-2026-08-04": D("PROCTER & GAMBLE Co")}
+    for q, want in [("Bank of America's net income?", "BAC"), ("BofA deposits", "BAC"),
+                    ("Disney's revenue", "DIS"), ("McDonald's franchised restaurants", "MCD"),
+                    ("Pepsi's revenue", "PEP"), ("P&G's net sales", "PG")]:
+        assert [d.split("-")[0] for d in companies_in(q, reg)] == [want], q

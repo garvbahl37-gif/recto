@@ -10,10 +10,13 @@ from __future__ import annotations
 
 import re
 
-# What people call a company, when it is not its legal name.
+# What people call a company, when it is not its legal name. ("Coke" is left
+# out on purpose: steelmakers' filings are full of coal coke.)
 ALIASES = {
     "google": "GOOGL", "facebook": "META", "instagram": "META", "lilly": "LLY",
     "j&j": "JNJ", "jp morgan": "JPM", "chase": "JPM", "berkshire": "BRK-B",
+    "bank of america": "BAC", "bofa": "BAC", "disney": "DIS", "mcdonald": "MCD",
+    "pepsi": "PEP", "p&g": "PG", "general electric": "GE",
 }
 # Legal-name words too common to identify anyone.
 _GENERIC = {"the", "first", "american", "international", "general", "united", "national",
