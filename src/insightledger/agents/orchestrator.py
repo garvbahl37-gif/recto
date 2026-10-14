@@ -75,9 +75,15 @@ class Orchestrator:
         tracer: Tracer = state["tracer"]
         with tracer.span("verifier"):
             confs: list[float] = []
-            for claim in state["claims"]:
-                ok, conf, note = self.provider.verify_claim(
-                    state["question"], claim, state["retrieved"], state["meter"])
+            claims = state["claims"]
+            batch = getattr(self.provider, "verify_claims", None)
+            if batch is not None and claims:
+                # one model call for every claim, instead of one per claim
+                verdicts = batch(state["question"], claims, state["retrieved"], state["meter"])
+            else:
+                verdicts = [self.provider.verify_claim(
+                    state["question"], c, state["retrieved"], state["meter"]) for c in claims]
+            for claim, (ok, conf, note) in zip(claims, verdicts):
                 claim.verified = ok
                 claim.confidence = conf
                 claim.verifier_note = note

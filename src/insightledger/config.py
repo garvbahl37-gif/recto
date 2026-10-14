@@ -50,6 +50,14 @@ class Settings:
     llm_model: str = "claude-opus-4-8"
     llm_model_cheap: str = "claude-haiku-4-5-20251001"
 
+    # Ollama Cloud (OpenAI-compatible). Kimi models need paid credits on
+    # ollama.com; gpt-oss is the strongest model on the free tier.
+    ollama_api_key: str = ""
+    ollama_base_url: str = "https://ollama.com/v1"
+    ollama_model: str = "gpt-oss:120b"          # reasoning questions
+    ollama_model_cheap: str = "gpt-oss:20b"     # lookups, verification
+    llm_timeout: float = 90.0                   # seconds per model call
+
     # ColQwen (visual page embeddings)
     colqwen_model: str = "vidore/colqwen2-v1.0"
     device: str = "auto"
@@ -92,10 +100,12 @@ class Settings:
     def resolve_llm(self) -> str:
         if self.llm != "auto":
             return self.llm
-        # fully local by default: deterministic grounded stub. Opt into Claude
-        # for production-grade generation by setting ANTHROPIC_API_KEY.
+        # Fully local by default: the deterministic grounded stub. A configured
+        # key opts into a real model — Claude first, then Ollama Cloud.
         if _has("anthropic") and self.anthropic_api_key:
             return "claude"
+        if self.ollama_api_key:
+            return "ollama"
         return "stub"
 
     def resolve_graph(self) -> str:
@@ -153,6 +163,11 @@ def get_settings() -> Settings:
         anthropic_api_key=_env("ANTHROPIC_API_KEY", ""),
         llm_model=_env("IL_LLM_MODEL", "claude-opus-4-8"),
         llm_model_cheap=_env("IL_LLM_MODEL_CHEAP", "claude-haiku-4-5-20251001"),
+        ollama_api_key=_env("OLLAMA_API_KEY", ""),
+        ollama_base_url=_env("OLLAMA_BASE_URL", "https://ollama.com/v1"),
+        ollama_model=_env("IL_OLLAMA_MODEL", "gpt-oss:120b"),
+        ollama_model_cheap=_env("IL_OLLAMA_MODEL_CHEAP", "gpt-oss:20b"),
+        llm_timeout=float(_env("IL_LLM_TIMEOUT", "90")),
         colqwen_model=_env("IL_COLQWEN_MODEL", "vidore/colqwen2-v1.0"),
         device=_env("IL_DEVICE", "auto"),
         qdrant_url=_env("QDRANT_URL", "http://localhost:6333"),

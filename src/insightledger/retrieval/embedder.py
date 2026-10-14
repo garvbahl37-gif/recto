@@ -25,10 +25,10 @@ _DIM = 128
 _TOK = re.compile(r"[A-Za-z0-9%$.\-]+")
 
 
-def maxsim(query: np.ndarray, doc: np.ndarray) -> float:
-    """Late-interaction MaxSim between two (T, D) multi-vector matrices."""
+def best_per_token(query: np.ndarray, doc: np.ndarray) -> np.ndarray:
+    """For each query token, its best similarity to any document token (Tq,)."""
     if query.size == 0 or doc.size == 0:
-        return 0.0
+        return np.zeros(max(len(query), 1), dtype=np.float32)
     # numpy 2.0 on macOS Accelerate raises a spurious divide-by-zero flag on
     # float32 matmul even though every value is finite. Silence the flag, then
     # check the result ourselves so a genuinely bad vector still cannot hide.
@@ -36,7 +36,30 @@ def maxsim(query: np.ndarray, doc: np.ndarray) -> float:
         sim = query @ doc.T           # (Tq, Td)
     if not np.isfinite(sim).all():
         sim = np.nan_to_num(sim, nan=0.0, posinf=1.0, neginf=-1.0)
-    return float(sim.max(axis=1).sum())
+    return sim.max(axis=1)
+
+
+def maxsim(query: np.ndarray, doc: np.ndarray) -> float:
+    """Late-interaction MaxSim between two (T, D) multi-vector matrices."""
+    if query.size == 0 or doc.size == 0:
+        return 0.0
+    return float(best_per_token(query, doc).sum())
+
+
+# Hashed stub vectors only score ~1.0 against the identical token, so a best
+# match above this means "the page contains this word".
+EXACT_MATCH = 0.98
+
+
+def idf_weights(best: np.ndarray) -> np.ndarray:
+    """BM25-style weight per query token from a (pages, tokens) matrix of best
+    matches. Words on most pages ("how", "did", a company's own name inside its
+    filing) count for almost nothing; rare words decide the ranking. A word no
+    page contains cannot tell pages apart, so it gets no weight at all."""
+    n_pages = best.shape[0]
+    have = (best > EXACT_MATCH).sum(axis=0).astype(np.float64)
+    w = np.where(have > 0, np.log((n_pages - have + 0.5) / (have + 0.5) + 1.0), 0.0)
+    return w if w.any() else np.ones_like(w)
 
 
 class Embedder(Protocol):

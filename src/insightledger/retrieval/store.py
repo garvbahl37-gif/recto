@@ -16,7 +16,7 @@ from typing import Any, Optional, Protocol
 import numpy as np
 
 from ..config import Settings, get_settings
-from .embedder import maxsim
+from .embedder import best_per_token, idf_weights, maxsim
 
 
 @dataclass
@@ -29,7 +29,8 @@ class Hit:
 class VectorStore(Protocol):
     def upsert(self, key: str, vectors: np.ndarray, payload: dict[str, Any]) -> None: ...
     def search(self, query_vectors: np.ndarray, top_k: int,
-               doc_ids: Optional[list[str]] = None) -> list[Hit]: ...
+               doc_ids: Optional[list[str]] = None,
+               weighting: str = "none") -> list[Hit]: ...
     def count(self) -> int: ...
     def save(self) -> None: ...
     def load(self) -> None: ...
@@ -46,15 +47,24 @@ class MemoryStore:
         self._payloads[key] = payload
 
     def search(self, query_vectors: np.ndarray, top_k: int,
-               doc_ids: Optional[list[str]] = None) -> list[Hit]:
-        hits: list[Hit] = []
-        for key, vecs in self._vectors.items():
-            payload = self._payloads[key]
-            if doc_ids and payload.get("doc_id") not in doc_ids:
-                continue
-            hits.append(Hit(key=key, score=maxsim(query_vectors, vecs), payload=payload))
-        hits.sort(key=lambda h: h.score, reverse=True)
-        return hits[:top_k]
+               doc_ids: Optional[list[str]] = None,
+               weighting: str = "none") -> list[Hit]:
+        keys = [k for k, _ in self._vectors.items()
+                if not doc_ids or self._payloads[k].get("doc_id") in doc_ids]
+        if not keys:
+            return []
+        if weighting == "idf" and query_vectors.size:
+            # (pages, query tokens): weight each token by how rare it is among
+            # the pages in scope, so scoping to one filing re-weights correctly
+            best = np.stack([best_per_token(query_vectors, self._vectors[k]) for k in keys])
+            with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+                scores = best @ idf_weights(best)   # same spurious macOS flag
+            scores = np.nan_to_num(scores, nan=0.0, posinf=0.0, neginf=0.0)
+        else:
+            scores = np.array([maxsim(query_vectors, self._vectors[k]) for k in keys])
+        order = np.argsort(-scores, kind="stable")[:top_k]
+        return [Hit(key=keys[i], score=float(scores[i]), payload=self._payloads[keys[i]])
+                for i in order]
 
     def count(self) -> int:
         return len(self._vectors)
@@ -108,7 +118,10 @@ class QdrantStore:
             id=self._id, vector=vectors.tolist(), payload={**payload, "key": key})])
 
     def search(self, query_vectors: np.ndarray, top_k: int,
-               doc_ids: Optional[list[str]] = None) -> list[Hit]:
+               doc_ids: Optional[list[str]] = None,
+               weighting: str = "none") -> list[Hit]:
+        # Qdrant runs MaxSim natively; `weighting` applies to the in-memory
+        # store's lexical stub vectors only.
         flt = None
         if doc_ids:
             flt = self.qm.Filter(must=[self.qm.FieldCondition(

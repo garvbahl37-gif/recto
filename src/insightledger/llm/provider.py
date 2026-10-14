@@ -488,12 +488,16 @@ class ClaudeProvider:
 
 
 def get_provider(settings: Optional[Settings] = None) -> Provider:
-    """Fully local by default (deterministic grounded stub); Claude when a key
-    is configured. Any provider init failure falls back to the stub."""
+    """Fully local by default (deterministic grounded stub); Claude or Ollama
+    Cloud when a key is configured. Any init failure falls back to the stub."""
     s = settings or get_settings()
     try:
-        if s.resolve_llm() == "claude":
+        backend = s.resolve_llm()
+        if backend == "claude":
             return ClaudeProvider(s)
+        if backend == "ollama":
+            from .ollama import OllamaProvider
+            return OllamaProvider(s)
     except Exception:
         pass
     return StubProvider()
