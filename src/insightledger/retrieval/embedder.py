@@ -29,7 +29,13 @@ def maxsim(query: np.ndarray, doc: np.ndarray) -> float:
     """Late-interaction MaxSim between two (T, D) multi-vector matrices."""
     if query.size == 0 or doc.size == 0:
         return 0.0
-    sim = query @ doc.T           # (Tq, Td)
+    # numpy 2.0 on macOS Accelerate raises a spurious divide-by-zero flag on
+    # float32 matmul even though every value is finite. Silence the flag, then
+    # check the result ourselves so a genuinely bad vector still cannot hide.
+    with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+        sim = query @ doc.T           # (Tq, Td)
+    if not np.isfinite(sim).all():
+        sim = np.nan_to_num(sim, nan=0.0, posinf=1.0, neginf=-1.0)
     return float(sim.max(axis=1).sum())
 
 
@@ -58,7 +64,18 @@ class StubEmbedder:
         self._cache: dict[str, np.ndarray] = {}
 
     def _tokens(self, text: str) -> list[str]:
-        return [t.lower() for t in _TOK.findall(text)][:512]
+        return [t.lower() for t in _TOK.findall(text)]
+
+    @staticmethod
+    def _unique(tokens: list[str]) -> list[str]:
+        """First occurrence of each token, in order.
+
+        MaxSim scores a document by the *best* match for each query token, so
+        repeated document tokens add nothing — collapsing them is lossless.
+        This replaces a hard 512-token cap that silently dropped the tail of
+        81% of live 10-K pages; a page's vocabulary is only ~260-370 words.
+        """
+        return list(dict.fromkeys(tokens))
 
     def _matrix(self, tokens: list[str]) -> np.ndarray:
         if not tokens:
@@ -74,10 +91,12 @@ class StubEmbedder:
 
     def embed_page(self, page: Page) -> np.ndarray:
         text = page.text or " ".join(r.text for r in page.regions)
-        return self._matrix(self._tokens(text))
+        return self._matrix(self._unique(self._tokens(text)))
 
     def embed_query(self, text: str) -> np.ndarray:
-        return self._matrix(self._tokens(text))
+        # Queries keep repeats: every query token is a separate term in the
+        # MaxSim sum. Long pasted questions are clipped to stay cheap.
+        return self._matrix(self._tokens(text)[:256])
 
 
 class ColQwenEmbedder:

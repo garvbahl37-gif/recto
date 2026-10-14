@@ -60,7 +60,9 @@ class Settings:
 
     # EDGAR
     edgar_user_agent: str = "InsightLedger research example@example.com"
-    seed_tickers: str = "AAPL,MSFT,NVDA"   # live filings ingested on first boot
+    # Thirteen large filers across tech, finance, health and retail. Measured:
+    # 1,227 pages, ~305 MB resident — inside Render free tier's 512 MB.
+    seed_tickers: str = "AAPL,MSFT,NVDA,GOOGL,AMZN,META,TSLA,JPM,V,JNJ,WMT,LLY,NFLX"
     seed_form: str = "10-K"
     bootstrap: str = "live"                # live (EDGAR) | sample (fixture, offline)
 
@@ -156,7 +158,7 @@ def get_settings() -> Settings:
         qdrant_url=_env("QDRANT_URL", "http://localhost:6333"),
         qdrant_api_key=_env("QDRANT_API_KEY", ""),
         edgar_user_agent=_env("IL_EDGAR_USER_AGENT", "InsightLedger research example@example.com"),
-        seed_tickers=_env("IL_SEED_TICKERS", "AAPL,MSFT,NVDA"),
+        seed_tickers=_env("IL_SEED_TICKERS", "AAPL,MSFT,NVDA,GOOGL,AMZN,META,TSLA,JPM,V,JNJ,WMT,LLY,NFLX"),
         seed_form=_env("IL_SEED_FORM", "10-K"),
         bootstrap=_env("IL_BOOTSTRAP", "live"),
         top_k=int(_env("IL_TOP_K", "5")),

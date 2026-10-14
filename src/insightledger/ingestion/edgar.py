@@ -188,9 +188,12 @@ class EdgarClient:
                         "form": want,
                         "name": sub.get("name", identifier),
                     }
+        have = sorted(set(recent["form"]))[:6]
         raise ValueError(
-            f"{identifier} has no annual report (10-K/20-F) on EDGAR — it may be "
-            f"a fund, ETF, or non-reporting entity")
+            f"{identifier} resolves to {sub.get('name', identifier)} (CIK {cik}), which "
+            f"has no {form} or other annual report on EDGAR yet"
+            + (f" — its filings are {', '.join(have)}" if have else "")
+            + ". New holding companies, funds and ETFs often look like this.")
 
     @staticmethod
     def _clean_tokens(text: str) -> str:
@@ -236,14 +239,15 @@ class EdgarClient:
         return (int(m.group(1)), m.group(2)) if m else (99, "")
 
     @classmethod
-    def _paginate(cls, text: str, max_pages: int = 150,
+    def _paginate(cls, text: str, max_pages: int = 400,
                   chars_per_page: int = 4000) -> list[str]:
         """Slice a filing into fixed-size pages.
 
         The cap has to clear a whole 10-K. At 40 pages (160K chars) NVIDIA's
         filing stopped inside Item 1A, so its income statement was never
         indexed and every revenue question was unanswerable while still
-        looking answerable. 150 pages covers Items 1 through 16.
+        looking answerable. JPMorgan's runs to 172 pages; 400 is a guard
+        against pathological documents, not a budget.
         """
         """Section-aware pagination.
 
@@ -352,12 +356,12 @@ class EdgarClient:
             p.section = last
         return doc
 
-    def fetch(self, identifier: str, form: str = "10-K", max_pages: int = 150) -> Document:
+    def fetch(self, identifier: str, form: str = "10-K", max_pages: int = 400) -> Document:
         _, label = self.resolve_cik(identifier)
         return self._build(label, self.latest_filing(identifier, form), max_pages)
 
     def fetch_specific(self, identifier: str, accession: str, primary_doc: str,
-                       form: str, date: str, max_pages: int = 150) -> Document:
+                       form: str, date: str, max_pages: int = 400) -> Document:
         """Ingest one specific filing (by accession) rather than the latest."""
         cik, label = self.resolve_cik(identifier)
         meta = {"cik": cik, "accession": accession.replace("-", ""),

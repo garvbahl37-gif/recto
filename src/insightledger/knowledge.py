@@ -83,12 +83,22 @@ def ensure_live_index(settings: Optional[Settings] = None,
     s = settings or get_settings()
     s.ensure_dirs()
     retriever = Retriever(settings=s)
-    if not force and retriever.store.count() > 0 and _registry_path(s).exists():
-        return retriever
     reg = load_registry(s)
-    have = {d.doc_id.split("-")[0] for d in reg.values()}
-    for ticker in [t.strip().upper() for t in s.seed_tickers.split(",") if t.strip()]:
-        if ticker in have:
+    if retriever.store.count() == 0:
+        reg = {}            # registry without vectors is stale; rebuild both
+    seeds = [t.strip().upper() for t in s.seed_tickers.split(",") if t.strip()]
+
+    def indexed(ticker: str) -> bool:
+        # doc_ids are "<TICKER>-<FORM>-<DATE>"; match the whole ticker so
+        # "BRK-B" is not mistaken for "BRK" and refetched on every boot.
+        return any(doc_id.upper().startswith(ticker + "-") for doc_id in reg)
+
+    # Only seeds that are missing cost anything, so a warm instance with an
+    # up-to-date index starts without touching the network. (This used to
+    # return early whenever any index existed, so seeds added later were
+    # never ingested.)
+    for ticker in seeds:
+        if not force and indexed(ticker):
             continue
         try:
             doc = ingest_ticker(ticker, form=s.seed_form, settings=s, retriever=retriever)
