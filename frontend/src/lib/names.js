@@ -14,7 +14,7 @@ const KNOWN = {
 const SUFFIX = /[,.]?\s+(inc|incorporated|corp|corporation|co|company|ltd|plc|holdings|group|& co)\.?$/i;
 
 // Words a title-cased legal name keeps in capitals or in lower case.
-const CAPS = new Set(["LLC", "LP", "LLP", "PLC", "NV", "N.V.", "SA", "S.A.", "AG", "SE", "ASA", "AB",
+const CAPS = new Set(["LLC", "LP", "LLP", "PLC", "NV", "N.V.", "SA", "S.A.", "AG", "SE", "ASA", "AB", "A/S",
   "USA", "US", "UK", "II", "III", "IV", "VI", "ETF", "REIT", "ADR", "NA"]);
 const SMALL = new Set(["of", "and", "the", "de", "del", "della", "dei", "la", "le", "les", "for", "in",
   "on", "du", "des", "di", "da", "van", "von", "der"]);
@@ -25,7 +25,9 @@ const FORMS = new Set(["inc", "inc.", "corp", "corp.", "co", "co.", "ltd", "ltd.
  *  is; one mostly in capitals ("ELI LILLY & Co") is recased whole. */
 export function tidyName(name) {
   let n = (name || "").trim();
-  for (let i = 0; i < 2; i++) n = n.replace(/\s*\/[A-Za-z]{1,6}\/?\s*$/, "");   // /DE/, /NEW, /ADR
+  // state and status markers EDGAR appends (/DE/, /NEW, /ADR, \ CA), but
+  // not a legal form written with a slash: "Genmab A/S" keeps its "A/S"
+  for (let i = 0; i < 2; i++) n = n.replace(/(?<!\b[A-Za-z])\s*[\\/]\s*[A-Za-z]{1,6}[\\/]?\s*$/, "");
   const letters = n.replace(/[^A-Za-z]/g, "");
   if (!letters || letters.replace(/[^A-Z]/g, "").length / letters.length < 0.7) return n;
   return n.toLowerCase().split(/(\s+|-)/).map((w, i) => {
