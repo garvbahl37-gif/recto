@@ -73,11 +73,11 @@ def load_registry(s: Optional[Settings] = None) -> dict[str, Document]:
     """
     s = s or get_settings()
     p = _registry_path(s)
-    if not p.exists():
-        return {}
-    st = p.stat()
     key = str(p)
     hit = _REGISTRY_CACHE.get(key)
+    if not p.exists():
+        return hit[2] if hit and hit[0] == -1 else {}      # held in memory only
+    st = p.stat()
     if hit and hit[0] == st.st_mtime_ns and hit[1] == st.st_size:
         return hit[2]
     # straight from JSON to models, without a dict of every page in between
@@ -89,6 +89,22 @@ def load_registry(s: Optional[Settings] = None) -> dict[str, Document]:
             pg.text = sys.intern(pg.text)
     _REGISTRY_CACHE[key] = (st.st_mtime_ns, st.st_size, reg)
     return reg
+
+
+def _keep_registry(docs: list[Document], s: Settings, write: bool) -> None:
+    """The registry as it now stands: written out, or held in memory over the
+    file the image shipped with, which then stays as it was."""
+    if write:
+        save_registry(docs, s)
+        return
+    path = _registry_path(s)
+    st = path.stat() if path.exists() else None
+    stamp = (st.st_mtime_ns, st.st_size) if st else (-1, -1)
+    _REGISTRY_CACHE[str(path)] = (*stamp, {d.doc_id: d for d in docs})
+
+
+def _seeds(s: Settings) -> set[str]:
+    return {t.strip().upper() for t in s.seed_tickers.split(",") if t.strip()}
 
 
 def _give_back_memory() -> None:
@@ -164,7 +180,7 @@ def evict_over_budget(settings: Optional[Settings] = None,
     what lets anyone ask about any company without the index outgrowing memory."""
     s = settings or get_settings()
     reg = load_registry(s)
-    seeds = {t.strip().upper() for t in s.seed_tickers.split(",") if t.strip()}
+    seeds = _seeds(s)
     fetched = [d for d in reg if _ticker(d).upper() not in seeds]
     over = len(fetched) - max(0, s.max_fetched)
     if over <= 0:
@@ -175,8 +191,9 @@ def evict_over_budget(settings: Optional[Settings] = None,
         for d in victims:
             retriever.store.delete_doc(d)
             _LAST_USED.pop(d, None)
-        retriever.store.save()
-        save_registry([v for k, v in reg.items() if k not in victims], s)
+        if s.persist_fetched:
+            retriever.store.save()
+        _keep_registry([v for k, v in reg.items() if k not in victims], s, s.persist_fetched)
     return victims
 
 
@@ -255,12 +272,15 @@ def _shelve(doc: Document, s: Settings, retriever: Retriever) -> None:
     registry would each drop the other's filing. The download happens before
     this, outside the lock.
     """
+    write = s.persist_fetched or _ticker(doc.doc_id).upper() in _seeds(s)
     with _FETCH_LOCK:
         Indexer(embedder=retriever.embedder, store=retriever.store,
-                settings=s).index_documents([doc])
+                settings=s).index_document(doc)
+        if write:
+            retriever.store.save()
         reg = dict(load_registry(s))
         reg[doc.doc_id] = doc
-        save_registry(list(reg.values()), s)
+        _keep_registry(list(reg.values()), s, write)
         touch([doc.doc_id])
         evict_over_budget(s, retriever)
     _give_back_memory()

@@ -77,6 +77,10 @@ class Settings:
     # annual report from EDGAR before answering. Fetched filings beyond the
     # budget are evicted least-recently-used first; seeds never are.
     auto_fetch: bool = True
+    # Write fetched filings to disk. Off on Render, whose disk resets to the
+    # image on restart anyway, so the write was pure cost on a slow CPU. Seeds
+    # are always written: the Docker build bakes them into the image.
+    persist_fetched: bool = True
     max_fetched: int = 16
     # Anyone can ask a question, so EDGAR fetches share one allowance per ten
     # minutes across the whole service (question-triggered and POST /ingest).
@@ -185,6 +189,7 @@ def get_settings() -> Settings:
         seed_tickers=_env("IL_SEED_TICKERS", "AAPL,MSFT,NVDA,GOOGL,AMZN,META,TSLA,NFLX,ORCL,AVGO,AMD,CRM,JPM,BAC,GS,V,MA,BRK-B,WMT,COST,KO,PEP,PG,MCD,NKE,DIS,JNJ,LLY,UNH,CVX"),
         seed_form=_env("IL_SEED_FORM", "10-K"),
         auto_fetch=_env("IL_AUTO_FETCH", "1") == "1",
+        persist_fetched=_env("IL_PERSIST_FETCHED", "1") == "1",
         max_fetched=int(_env("IL_MAX_FETCHED", "16")),
         fetch_rate=int(_env("IL_FETCH_RATE", "20")),
         bootstrap=_env("IL_BOOTSTRAP", "live"),

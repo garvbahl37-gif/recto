@@ -19,5 +19,9 @@ ENV IL_BOOTSTRAP=live \
 RUN python -m insightledger.cli bootstrap && \
     python -c "from insightledger.eval.golden_set import write_golden; write_golden()"
 
+# At run time, filings fetched for a question live in memory only: the disk
+# resets to this image on every restart, so writing them out was pure cost.
+ENV IL_PERSIST_FETCHED=0
+
 EXPOSE 8000
 CMD ["python", "-m", "insightledger.cli", "serve", "--host", "0.0.0.0", "--port", "8000"]
