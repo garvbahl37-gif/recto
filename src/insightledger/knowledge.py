@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 import threading
 import time
 from typing import Callable, Optional
@@ -20,6 +21,8 @@ from typing import Callable, Optional
 from .config import Settings, get_settings
 from .ingestion import EdgarClient
 from .retrieval import Indexer, Retriever
+from pydantic import TypeAdapter
+
 from .schemas import Document
 
 
@@ -36,13 +39,31 @@ _DERIVED = {"pages": {"__all__": {"regions"}}}
 _REGISTRY_CACHE: dict[str, tuple[int, int, dict[str, Document]]] = {}
 
 
+_REGISTRY_JSON = TypeAdapter(dict[str, Document])
+
+
 def save_registry(docs: list[Document], s: Optional[Settings] = None) -> None:
+    """Write the registry one document at a time, then swap it in whole.
+
+    Serialising the whole shelf as one object built a Python copy of every page
+    and then one string of all of it, for each filing fetched; the memory that
+    took stayed with the process. Written per document, the cost is one
+    document's worth, and readers never see a half-written file. The documents
+    just written become the cache, so the next read does not parse them back.
+    """
     s = s or get_settings()
     s.index_dir.mkdir(parents=True, exist_ok=True)
-    _registry_path(s).write_text(
-        json.dumps({d.doc_id: d.model_dump(mode="json", exclude=_DERIVED) for d in docs}),
-        encoding="utf-8")
-    _REGISTRY_CACHE.pop(str(_registry_path(s)), None)
+    path = _registry_path(s)
+    part = path.with_suffix(".part")
+    with open(part, "w", encoding="utf-8") as f:
+        f.write("{")
+        for i, d in enumerate(docs):
+            f.write(("," if i else "") + json.dumps(d.doc_id) + ":")
+            f.write(d.model_dump_json(exclude=_DERIVED))
+        f.write("}")
+    part.replace(path)
+    st = path.stat()
+    _REGISTRY_CACHE[str(path)] = (st.st_mtime_ns, st.st_size, {d.doc_id: d for d in docs})
 
 
 def load_registry(s: Optional[Settings] = None) -> dict[str, Document]:
@@ -59,10 +80,26 @@ def load_registry(s: Optional[Settings] = None) -> dict[str, Document]:
     hit = _REGISTRY_CACHE.get(key)
     if hit and hit[0] == st.st_mtime_ns and hit[1] == st.st_size:
         return hit[2]
-    raw = json.loads(p.read_text(encoding="utf-8"))
-    reg = {k: Document.model_validate(v) for k, v in raw.items()}
+    # straight from JSON to models, without a dict of every page in between
+    reg = _REGISTRY_JSON.validate_json(p.read_bytes())
+    # The search index loads the same page text from its own file; interned,
+    # both hold one copy instead of two.
+    for d in reg.values():
+        for pg in d.pages:
+            pg.text = sys.intern(pg.text)
     _REGISTRY_CACHE[key] = (st.st_mtime_ns, st.st_size, reg)
     return reg
+
+
+def _give_back_memory() -> None:
+    """Hand freed heap pages back to the operating system (glibc; elsewhere a
+    no-op). Loading the index and parsing a filing free tens of megabytes of
+    short-lived strings, which otherwise stay counted against the server."""
+    try:
+        import ctypes
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:  # noqa: BLE001 — not glibc
+        pass
 
 
 # ------------------------------------------------- fetched-filing budget ----
@@ -134,11 +171,12 @@ def evict_over_budget(settings: Optional[Settings] = None,
         return []
     victims = sorted(fetched, key=lambda d: _LAST_USED.get(d, 0.0))[:over]
     retriever = retriever or Retriever(settings=s)
-    for d in victims:
-        retriever.store.delete_doc(d)
-        _LAST_USED.pop(d, None)
-    retriever.store.save()
-    save_registry([v for k, v in reg.items() if k not in victims], s)
+    with _FETCH_LOCK:
+        for d in victims:
+            retriever.store.delete_doc(d)
+            _LAST_USED.pop(d, None)
+        retriever.store.save()
+        save_registry([v for k, v in reg.items() if k not in victims], s)
     return victims
 
 
@@ -191,13 +229,7 @@ def ingest_ticker(ticker: str, form: str = "10-K",
     s.ensure_dirs()
     retriever = retriever or Retriever(settings=s)
     doc = EdgarClient(s).fetch(ticker, form=form)
-    Indexer(embedder=retriever.embedder, store=retriever.store,
-            settings=s).index_documents([doc])
-    reg = dict(load_registry(s))
-    reg[doc.doc_id] = doc
-    save_registry(list(reg.values()), s)
-    touch([doc.doc_id])
-    evict_over_budget(s, retriever)
+    _shelve(doc, s, retriever)
     return doc
 
 
@@ -209,16 +241,29 @@ def ingest_filing(ticker: str, accession: str, primary_doc: str, form: str,
     s.ensure_dirs()
     retriever = retriever or Retriever(settings=s)
     doc = EdgarClient(s).fetch_specific(ticker, accession, primary_doc, form, date)
-    Indexer(embedder=retriever.embedder, store=retriever.store,
-            settings=s).index_documents([doc])
-    reg = dict(load_registry(s))
-    reg[doc.doc_id] = doc
-    save_registry(list(reg.values()), s)
-    touch([doc.doc_id])
     # The catalogue's Index button is the same kind of fetch as asking about a
-    # new company; without this the budget could be bypassed through /ingest.
-    evict_over_budget(s, retriever)
+    # new company, so it goes through the same budget.
+    _shelve(doc, s, retriever)
     return doc
+
+
+def _shelve(doc: Document, s: Settings, retriever: Retriever) -> None:
+    """Index a fetched filing, register it and keep the shelf within budget.
+
+    One shelf update at a time: the catalogue's Index button and a question
+    naming a new company can fetch together, and two read-modify-writes of the
+    registry would each drop the other's filing. The download happens before
+    this, outside the lock.
+    """
+    with _FETCH_LOCK:
+        Indexer(embedder=retriever.embedder, store=retriever.store,
+                settings=s).index_documents([doc])
+        reg = dict(load_registry(s))
+        reg[doc.doc_id] = doc
+        save_registry(list(reg.values()), s)
+        touch([doc.doc_id])
+        evict_over_budget(s, retriever)
+    _give_back_memory()
 
 
 def ensure_live_index(settings: Optional[Settings] = None,
@@ -232,8 +277,12 @@ def ensure_live_index(settings: Optional[Settings] = None,
     s.ensure_dirs()
     retriever = Retriever(settings=s)
     reg = load_registry(s)
-    if retriever.store.count() == 0:
-        reg = {}            # registry without vectors is stale; rebuild both
+    if retriever.store.count() == 0 and reg:
+        # A registry without vectors is stale (the index was discarded, say
+        # for a new embedding scheme): rebuild both, or its filings would sit
+        # on the shelf with nothing behind them.
+        save_registry([], s)
+        reg = {}
     seeds = [t.strip().upper() for t in s.seed_tickers.split(",") if t.strip()]
 
     def indexed(ticker: str) -> bool:
@@ -253,6 +302,8 @@ def ensure_live_index(settings: Optional[Settings] = None,
             print(f"[ingest] {ticker}: {doc.doc_id} ({len(doc.pages)} pages)")
         except Exception as exc:  # noqa: BLE001
             print(f"[ingest] {ticker} skipped: {exc}")
+    load_registry(s)            # parsed now, so the first question does not wait
+    _give_back_memory()
     return retriever
 
 

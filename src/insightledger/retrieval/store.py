@@ -9,6 +9,7 @@ MultiVectorConfig + MAX_SIM comparator.
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional, Protocol
@@ -53,6 +54,7 @@ class MemoryStore:
     """
     settings: Settings = field(default_factory=get_settings)
     dim: Optional[int] = None                      # expected width; None accepts any
+    scheme: str = ""                               # how the vectors were made
     _ids: dict[str, np.ndarray] = field(default_factory=dict)       # page -> row ids
     _payloads: dict[str, dict[str, Any]] = field(default_factory=dict)
     _table: Optional[np.ndarray] = None            # capacity-doubling row table
@@ -186,10 +188,22 @@ class MemoryStore:
         lens = np.array([len(self._ids[k]) for k in keys], dtype=np.int64)
         flat = (np.concatenate([self._ids[k] for k in keys]) if keys
                 else np.zeros(0, dtype=np.int32))
-        np.savez_compressed(str(self._path) + ".npz", __vocab__=self._vocab(),
-                            __ids__=flat, __lens__=lens)
-        (self._path.with_suffix(".json")).write_text(
-            json.dumps({"__keys__": keys, "payloads": self._payloads}), encoding="utf-8")
+        # Written aside and swapped in, so a crash mid-save leaves the last
+        # good index; the payloads are streamed a page at a time rather than
+        # built into one string of every page's text.
+        part = Path(str(self._path) + ".part.npz")
+        # the page keys travel with their row ids, so the vectors are whole
+        # even if a crash lands between the two swaps below
+        np.savez_compressed(str(part), __vocab__=self._vocab(), __ids__=flat, __lens__=lens,
+                            __keys__=np.array(keys, dtype=str), __scheme__=np.array(self.scheme))
+        js = self._path.with_suffix(".json")
+        with open(js.with_suffix(".part"), "w", encoding="utf-8") as f:
+            f.write('{"__keys__": ' + json.dumps(keys) + ', "payloads": {')
+            for i, k in enumerate(keys):
+                f.write(("," if i else "") + json.dumps(k) + ":" + json.dumps(self._payloads[k]))
+            f.write("}}")
+        part.replace(str(self._path) + ".npz")
+        js.with_suffix(".part").replace(js)
 
     def load(self) -> None:
         npz = Path(str(self._path) + ".npz")
@@ -200,6 +214,9 @@ class MemoryStore:
         meta = json.loads(js.read_text(encoding="utf-8"))
         self._ids, self._payloads, self._table, self._n, self._row_of = {}, {}, None, 0, {}
         if "__vocab__" in data.files:                       # shared-row format
+            made = str(data["__scheme__"]) if "__scheme__" in data.files else ""
+            if made != self.scheme:
+                return                                      # other tokens: rebuild
             vocab = data["__vocab__"]
             if self.dim and vocab.size and vocab.shape[1] != self.dim:
                 return                                      # another width: rebuild
@@ -207,12 +224,22 @@ class MemoryStore:
                 self._append(vocab.astype(np.float32))
                 self._row_of = {hash(r.tobytes()): i for i, r in enumerate(self._vocab())}
             flat, lens = data["__ids__"], data["__lens__"]
+            keys = ([str(k) for k in data["__keys__"]] if "__keys__" in data.files
+                    else meta["__keys__"])
+            if len(keys) != len(lens):
+                return                                      # torn save: rebuild
             offs = np.concatenate([[0], np.cumsum(lens)])
-            for i, k in enumerate(meta["__keys__"]):
+            for i, k in enumerate(keys):
                 self._ids[k] = flat[offs[i]: offs[i + 1]].astype(np.int32)
             self._payloads = meta["payloads"]
+            # the document registry holds this text too: interned, it is one copy
+            for pl in self._payloads.values():
+                if isinstance(pl.get("text"), str):
+                    pl["text"] = sys.intern(pl["text"])
             return
         # The earlier one-matrix-per-page format: fold it into shared rows.
+        if self.scheme:
+            return                                          # predates the scheme: rebuild
         mats = {k: data[k] for k in data.files}
         if self.dim and any(m.ndim != 2 or m.shape[1] != self.dim for m in mats.values()):
             return                                          # another width: rebuild
@@ -275,13 +302,14 @@ class QdrantStore:
         return None
 
 
-def get_store(settings: Optional[Settings] = None, dim: int = 128) -> VectorStore:
+def get_store(settings: Optional[Settings] = None, dim: int = 128,
+              scheme: str = "") -> VectorStore:
     s = settings or get_settings()
     if s.resolve_vector_store() == "qdrant":
         try:
             return QdrantStore(s, dim=dim)
         except Exception:
             pass
-    store = MemoryStore(settings=s, dim=dim)
+    store = MemoryStore(settings=s, dim=dim, scheme=scheme)
     store.load()
     return store
