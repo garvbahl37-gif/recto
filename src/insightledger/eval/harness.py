@@ -79,7 +79,7 @@ def run_eval(items: Optional[list[EvalItem]] = None,
 def format_report(report: EvalReport, gate: Optional[GateOutcome] = None) -> str:
     lines = [
         "=" * 60,
-        "InsightLedger — Eval Report",
+        "Recto — Eval Report",
         "=" * 60,
         f"backends        : {json.dumps(report.backends)}",
         f"items           : {report.n}",

@@ -1,4 +1,4 @@
-"""InsightLedger CLI.
+"""Recto CLI.
 
     insightledger backends                 show resolved backends
     insightledger bootstrap                build + index the sample corpus

@@ -1,4 +1,4 @@
-"""InsightLedger — visual-first document intelligence.
+"""Recto — a reader for SEC filings that traces every figure to its page.
 
 Multi-agent visual-RAG over financial/compliance documents. Retrieval happens
 over rendered page *images* (ColQwen late-interaction) rather than lossy text

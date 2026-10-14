@@ -1,0 +1,136 @@
+/* ---------- wordmark: the name, and the first footnote ---------- */
+.wordmark { display: inline-flex; align-items: flex-start; text-decoration: none; color: var(--ink);
+  font-family: var(--display); font-weight: 860; font-size: 30px; line-height: 1; letter-spacing: -.005em; }
+.wordmark sup { font-family: var(--sans); font-weight: 700; font-size: 11px; color: var(--pencil);
+  margin-left: 2px; line-height: 1; transform: translateY(1px); }
+
+/* ---------- buttons: square, inked ---------- */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px;
+  padding: 0 20px; font-weight: 650; font-size: var(--t-16); text-decoration: none; white-space: nowrap;
+  border: 1.5px solid var(--ink); transition: background .15s var(--ease), color .15s var(--ease); }
+.btn-ink { background: var(--ink); color: var(--paper); }
+.btn-ink:hover { background: var(--ink-2); border-color: var(--ink-2); }
+.btn-line { color: var(--ink); }
+.btn-line:hover { background: var(--ink); color: var(--paper); }
+.btn:disabled { opacity: .4; cursor: default; }
+.btn-ink:disabled:hover { background: var(--ink); border-color: var(--ink); }
+.link { color: var(--ink); text-decoration: underline; text-decoration-thickness: 1px;
+  text-underline-offset: 3px; text-decoration-color: var(--rule-hi); }
+.link:hover { text-decoration-color: var(--pencil); }
+.iconbtn { width: 44px; height: 44px; display: grid; place-items: center; color: var(--ink-2); }
+.iconbtn:hover { color: var(--ink); }
+.kbd { font-family: var(--sans); font-size: 12px; font-weight: 600; color: var(--ink-3);
+  border: 1px solid var(--rule); padding: 1px 6px; line-height: 1.5; }
+
+/* ---------- the spread: two sheets meeting at a fold ---------- */
+.spread { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  background: var(--paper); box-shadow: var(--sheet); position: relative; }
+.page { position: relative; background: var(--paper); min-width: 0; }
+.page.verso::after, .page.recto::before { content: ""; position: absolute; top: 0; bottom: 0;
+  width: 26px; pointer-events: none; z-index: 1; }
+.page.verso::after { right: 0; background: linear-gradient(to left, var(--fold), transparent); }
+.page.recto::before { left: 0; width: 14px; background: linear-gradient(to right, var(--fold), transparent); }
+.running { display: flex; justify-content: space-between; gap: 16px; font-size: var(--t-12);
+  color: var(--ink-3); font-weight: 500; }
+.folio { position: absolute; bottom: 22px; font-size: var(--t-12); color: var(--ink-3); font-weight: 600; }
+.verso .folio { left: 40px; }
+.recto .folio { right: 40px; }
+@media (max-width: 900px) {
+  .spread { grid-template-columns: minmax(0, 1fr); }
+  .page.verso::after, .page.recto::before { display: none; }
+  .page.recto { border-top: 1px solid var(--rule); }
+}
+
+/* ---------- the filing page, in the filing's own type ---------- */
+.filing-text { font-family: var(--filing); font-size: 11.5px; line-height: 1.42; color: var(--ink);
+  text-align: justify; hyphens: auto; -webkit-hyphens: auto; word-break: break-word; margin: 0; }
+.filing-text mark { background: none; color: inherit; }
+.filing-text .dim { color: var(--ink-3); }
+.quote { font-family: var(--filing); font-size: var(--t-18); line-height: 1.5; color: var(--ink); }
+
+/* ---------- pencil ---------- */
+.pencil-layer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none;
+  overflow: visible; z-index: 2; }
+.pencil { fill: none; stroke: var(--pencil); stroke-width: 1.8; stroke-linecap: round;
+  stroke-linejoin: round; opacity: .95; }
+.pencil.thick { stroke-width: 2.4; }
+.pencil.draw { transition: stroke-dashoffset .9s cubic-bezier(.5, 0, .2, 1); }
+.mark-svg { display: inline-block; vertical-align: middle; overflow: visible; }
+/* A footnote numeral is raised with relative positioning rather than
+   vertical-align, so it keeps a real box (line-height 0 collapsed it to zero
+   height: visible, but nothing to tap) without pushing the lines apart. The
+   ::after extends the target to about 36px without moving the type. */
+.fn { position: relative; top: -.55em; display: inline-block; line-height: 1;
+  font-family: var(--sans); font-weight: 750; font-size: .62em; color: var(--pencil);
+  padding: 0 2px 0 3px; cursor: pointer; font-variant-numeric: tabular-nums; }
+.fn::after { content: ""; position: absolute; inset: -12px -9px; }
+.fn:hover, .fn.on { text-decoration: underline; text-decoration-thickness: 1.5px; text-underline-offset: 2px; }
+
+/* ---------- the shelf: filings as spines, thickness = pages ---------- */
+.shelf { display: flex; align-items: flex-end; gap: 3px; padding: 0 2px;
+  border-bottom: 3px solid var(--ink); min-height: 196px; overflow-x: auto; scrollbar-width: none; }
+.shelf::-webkit-scrollbar { display: none; }
+.spine { flex: none; height: 180px; position: relative; display: flex; flex-direction: column;
+  align-items: center; justify-content: space-between; padding: 10px 0 8px; background: var(--paper);
+  border: 1.5px solid var(--ink); border-bottom: 0; color: var(--ink);
+  transition: transform .18s var(--ease), background .15s var(--ease); }
+.spine:nth-child(3n+2) { height: 192px; }
+.spine:nth-child(4n+3) { height: 168px; }
+.spine .sp-name { writing-mode: vertical-rl; font-family: var(--display); font-weight: 760;
+  font-size: 15px; letter-spacing: .01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-height: 120px; }
+.spine .sp-tk { writing-mode: vertical-rl; font-size: 10px; font-weight: 700; letter-spacing: .04em;
+  color: var(--ink-3); }
+.spine:hover { transform: translateY(-6px); }
+.spine.on { background: var(--ink); color: var(--paper); }
+.spine.on .sp-tk { color: var(--paper); }
+.shelf-legend { display: flex; justify-content: space-between; font-size: var(--t-12);
+  color: var(--ink-3); margin-top: 8px; }
+
+/* ---------- inputs ---------- */
+.field { display: flex; align-items: center; gap: 10px; border-bottom: 1.5px solid var(--ink);
+  padding: 4px 0; }
+.field input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; font-size: var(--t-16);
+  padding: 8px 0; color: var(--ink); }
+.field input::placeholder { color: var(--ink-3); }
+.field:focus-within { border-bottom-color: var(--pencil); }
+
+/* ---------- overlays: palette, catalogue card ---------- */
+.overlay { position: fixed; inset: 0; z-index: 90; background: rgba(20, 20, 18, .42);
+  display: flex; align-items: flex-start; justify-content: center; padding: 11vh 16px 16px; }
+:root[data-theme="dark"] .overlay { background: rgba(0, 0, 0, .66); }
+.card { width: min(640px, 100%); background: var(--paper); box-shadow: var(--sheet);
+  max-height: 78vh; display: flex; flex-direction: column; }
+.card-head { padding: 22px 24px 16px; border-bottom: 1.5px solid var(--ink); }
+.card-title { font-family: var(--display); font-weight: 800; font-size: var(--t-36); line-height: 1; margin: 0; }
+.card-sub { font-size: var(--t-14); color: var(--ink-3); margin-top: 6px; }
+.card-body { overflow-y: auto; padding: 4px 0; }
+.card-foot { padding: 12px 24px; border-top: 1px solid var(--rule); font-size: var(--t-12); color: var(--ink-3); }
+.tabs { display: flex; gap: 2px; padding: 0 20px; border-bottom: 1px solid var(--rule); flex-wrap: wrap; }
+.tab { padding: 12px 8px; margin-bottom: -1px; font-size: var(--t-14); font-weight: 600; color: var(--ink-3);
+  border-bottom: 2px solid transparent; }
+.tab:hover { color: var(--ink); }
+.tab.on { color: var(--ink); border-bottom-color: var(--ink); }
+.row-btn { display: flex; align-items: baseline; gap: 14px; width: 100%; text-align: left;
+  padding: 12px 24px; border-bottom: 1px solid var(--hair); min-height: 44px; }
+.row-btn:hover, .row-btn.hl { background: var(--paper-2); }
+.row-btn .r-a { font-family: var(--display); font-weight: 760; font-size: var(--t-18); min-width: 64px; }
+.row-btn .r-b { flex: 1; min-width: 0; font-size: var(--t-14); color: var(--ink-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row-btn .r-c { font-size: var(--t-12); color: var(--ink-3); font-weight: 600; }
+.group { padding: 14px 24px 6px; font-size: var(--t-12); color: var(--ink-3); font-weight: 600; }
+.hint { padding: 22px 24px; font-size: var(--t-14); color: var(--ink-3); }
+
+/* ---------- toast ---------- */
+.toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 100;
+  background: var(--ink); color: var(--paper); padding: 12px 18px; font-size: var(--t-14);
+  font-weight: 600; box-shadow: var(--sheet); max-width: calc(100vw - 32px); }
+.toast.err { background: var(--pencil); color: #fff; }
+
+/* the landing shelf fills its sheet */
+.shelf.large { gap: 5px; min-height: 290px; }
+.shelf.large .spine { height: 270px; padding: 14px 0 12px; }
+.shelf.large .spine:nth-child(3n+2) { height: 286px; }
+.shelf.large .spine:nth-child(4n+3) { height: 252px; }
+.shelf.large .sp-name { font-size: 22px; max-height: 200px; }
+.shelf.large .sp-tk { font-size: 12px; }

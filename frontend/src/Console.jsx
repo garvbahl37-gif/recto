@@ -1,149 +1,151 @@
-import { useCallback, useEffect, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api.js";
-import { QUESTIONS } from "./lib/questions.js";
-import Rail from "./components/Rail.jsx";
-import Masthead from "./components/Masthead.jsx";
-import AskBlock from "./components/AskBlock.jsx";
-import Answer from "./components/Answer.jsx";
-import Corpus from "./components/Corpus.jsx";
-import Method from "./components/Method.jsx";
-import Trace from "./components/Trace.jsx";
+import { buildNotes } from "./lib/footnotes.js";
+import { displayName, possessive } from "./lib/names.js";
+import { Icon } from "./icons.jsx";
+import Wordmark from "./components/Wordmark.jsx";
+import { AnswerSheet, AskSheet, Stages, nameOfFactory } from "./components/Verso.jsx";
+import { RectoReading, RectoShelf, RectoSource } from "./components/Recto.jsx";
 import CommandPalette from "./components/CommandPalette.jsx";
 import CompanyModal from "./components/CompanyModal.jsx";
 
 export default function Console({ isDark, toggleTheme }) {
-  const [health, setHealth] = useState({ backends: {}, indexed_pages: 0 });
   const [filings, setFilings] = useState([]);
-  const [registry, setRegistry] = useState({});
-  const [activeDoc, setActiveDoc] = useState(null);
+  const [loadErr, setLoadErr] = useState("");
+  const [scope, setScope] = useState(null);
   const [q, setQ] = useState("");
+  const [phase, setPhase] = useState("idle");          // idle | reading | done
+  const [events, setEvents] = useState([]);
+  const [started, setStarted] = useState(0);
+  const [pulled, setPulled] = useState([]);
   const [answer, setAnswer] = useState(null);
-  const [asking, setAsking] = useState(false);
-  const [stage, setStage] = useState(0);
+  const [activeNote, setActiveNote] = useState(null);
+  const [showShelf, setShowShelf] = useState(false);
+  const [view, setView] = useState("verso");           // narrow screens: which page
+  const [cmd, setCmd] = useState(false);
+  const [modal, setModal] = useState(null);
   const [toast, setToast] = useState(null);
-  const [cmdOpen, setCmdOpen] = useState(false);
-  const [railOpen, setRailOpen] = useState(false);
-  const [modalTicker, setModalTicker] = useState(null);
+  const inflight = useRef(null);
 
-  const flash = (msg, err) => { setToast({ msg, err }); setTimeout(() => setToast(null), 3000); };
-  const loadHealth = async () => { try { setHealth(await api.health()); } catch {} };
-  const loadFilings = useCallback(async () => {
-    try {
-      const d = await api.documents();
-      setFilings(d.documents);
-      d.documents.forEach((f) => {
-        api.document(f.doc_id)
-          .then((doc) => setRegistry((r) => ({ ...r, [f.doc_id]: doc })))
-          .catch(() => {});
-      });
-    } catch {}
+  const flash = (msg, err) => { setToast({ msg, err }); setTimeout(() => setToast(null), 3400); };
+  const load = useCallback(async () => {
+    try { setFilings((await api.documents()).documents); setLoadErr(""); }
+    catch (e) { setLoadErr(e.message); }
   }, []);
-
-  useEffect(() => { loadHealth(); loadFilings(); }, [loadFilings]);
+  useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
     const h = (e) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault(); setCmdOpen((o) => !o);
-      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setCmd((o) => !o); }
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
   }, []);
 
-  // Walk the stage indicator while the graph runs, so the wait shows progress
-  // rather than a spinner that could mean anything.
-  useEffect(() => {
-    if (!asking) { setStage(0); return; }
-    const t = setInterval(() => setStage((s) => (s + 1) % 5), 420);
-    return () => clearInterval(t);
-  }, [asking]);
+  const nameOf = useMemo(() => nameOfFactory(filings), [filings]);
+  const scoped = filings.find((f) => f.doc_id === scope);
+  const scopeName = scoped ? displayName(scoped) : null;
 
-  const ask = async (question) => {
-    const text = (typeof question === "string" ? question : q).trim();
-    if (!text) return;
-    setQ(text); setAsking(true); setAnswer(null);
-    try { setAnswer(await api.query(text, activeDoc ? [activeDoc] : null)); }
-    catch (e) { flash("That question could not be run: " + e.message, true); }
-    finally { setAsking(false); }
+  const ask = async (text, docOverride) => {
+    const question = (typeof text === "string" ? text : q).trim();
+    if (!question) return;
+    inflight.current?.abort();
+    const ac = new AbortController();
+    inflight.current = ac;
+    const docIds = docOverride !== undefined ? (docOverride ? [docOverride] : null)
+      : scope ? [scope] : null;
+    const t0 = performance.now();
+    setQ(question); setPhase("reading"); setEvents([]); setPulled([]); setAnswer(null);
+    setActiveNote(null); setShowShelf(false); setStarted(t0); setView("verso");
+    try {
+      const a = await api.ask(question, docIds, (ev) => {
+        const e = { ...ev, t: performance.now() };
+        setEvents((es) => [...es, e]);
+        if (ev.stage === "retriever") setPulled(ev.pages);
+      }, ac.signal);
+      if (ac.signal.aborted) return;
+      setAnswer(a);
+      setPhase("done");
+      setActiveNote(buildNotes(a).notes[0]?.key || null);
+    } catch (e) {
+      if (ac.signal.aborted) return;
+      setPhase("idle");
+      flash(`The question could not be read: ${e.message}`, true);
+    }
   };
 
-  const scoped = filings.find((f) => f.doc_id === activeDoc);
+  const openNote = (key) => { setActiveNote(key); setShowShelf(false); setView("recto"); };
+  const pickScope = (docId) => { setScope(docId); setShowShelf(false); };
+
+  let recto;
+  if (showShelf || phase === "idle") {
+    recto = <RectoShelf filings={filings} scope={scope} onScope={pickScope} onPick={setModal} />;
+  } else if (phase === "reading") {
+    recto = <RectoReading pages={pulled} nameOf={nameOf} />;
+  } else if (answer?.citations?.length) {
+    recto = <RectoSource answer={answer} activeNote={activeNote} onNote={openNote} nameOf={nameOf} />;
+  } else {
+    const read = (answer?.retrieved || []).map((p) => ({ doc_id: p.doc_id, page_number: p.page_number }));
+    recto = <RectoReading pages={read} nameOf={nameOf} done />;
+  }
 
   return (
-    <div className="shell">
-      {railOpen && <button className="scrim" onClick={() => setRailOpen(false)} aria-label="Close corpus" />}
-      <Rail
-        open={railOpen} filings={filings} activeDoc={activeDoc} health={health}
-        onScope={setActiveDoc} onPick={setModalTicker} onClose={() => setRailOpen(false)}
-      />
+    <div className="desk">
+      <header className="desk-head">
+        <Wordmark href="/" />
+        <button className="scope" onClick={() => { setShowShelf((s) => !s); setView("recto"); }}
+                aria-expanded={showShelf}>
+          {scopeName ? `Reading ${possessive(scopeName)} ${scoped.doc_type}` : `Reading all ${filings.length} filings`}
+        </button>
+        {scope && <button className="link scope-clear" onClick={() => setScope(null)}>Read all</button>}
+        <span className="sp" />
+        <button className="find" onClick={() => setCmd(true)}>
+          <Icon name="search" size={15} /> Find <span className="kbd">⌘K</span>
+        </button>
+        <button className="iconbtn" onClick={toggleTheme} aria-label={isDark ? "Switch to light" : "Switch to dark"}>
+          <Icon name={isDark ? "sun" : "moon"} size={17} />
+        </button>
+      </header>
 
-      <div className="sheet">
-        <Masthead
-          filings={filings.length} pages={health.indexed_pages || 0} isDark={isDark}
-          onOpenRail={() => setRailOpen(true)} onOpenPalette={() => setCmdOpen(true)}
-          onToggleTheme={toggleTheme}
-        />
+      {loadErr && (
+        <p className="wake" role="status">
+          The reading service is waking up, which takes about a minute on the free tier.{" "}
+          <button className="link" onClick={load}>Try again</button>
+        </p>
+      )}
 
-        <div className="sheet-body">
-          <div className="opener">
-            <h1>{scoped ? scoped.company || scoped.title : "Ask the filings."}</h1>
-            <p>
-              Every sentence below is written from pages that were retrieved, quoted and checked.
-              Where a claim could not be grounded, nothing is written in its place.
-            </p>
-          </div>
-
-          <AskBlock
-            q={q} setQ={setQ} onAsk={ask} asking={asking} scopedTo={scoped}
-            onClearScope={() => setActiveDoc(null)} corpusSize={filings.length}
-            showSuggestions={!answer && !asking}
-          />
-
-          <AnimatePresence mode="wait">
-            {asking ? (
-              <motion.div key="run" className="running"
-                initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                <Trace running at={stage} />
-                <div style={{ marginTop: 18, display: "grid", gap: 9 }}>
-                  <div className="sk" style={{ width: "94%" }} />
-                  <div className="sk" style={{ width: "78%" }} />
-                  <div className="sk" style={{ width: "88%" }} />
-                </div>
-              </motion.div>
-            ) : answer ? (
-              <Answer key="ans" answer={answer} registry={registry} />
-            ) : (
-              <motion.div key="idle" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-                <Corpus filings={filings} onScope={setActiveDoc} />
-                <Method />
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
+      <div className="flip" role="tablist" aria-label="Page">
+        <button role="tab" aria-selected={view === "verso"} className={view === "verso" ? "on" : ""}
+                onClick={() => setView("verso")}>Question</button>
+        <button role="tab" aria-selected={view === "recto"} className={view === "recto" ? "on" : ""}
+                onClick={() => setView("recto")}>Pages</button>
       </div>
 
-      <CommandPalette
-        open={cmdOpen} onClose={() => setCmdOpen(false)} filings={filings} examples={QUESTIONS}
-        onScope={setActiveDoc} onAsk={ask} onIngest={setModalTicker} onToggleTheme={toggleTheme}
-      />
-      <CompanyModal
-        ticker={modalTicker} onClose={() => setModalTicker(null)} onScope={setActiveDoc}
-        onIngested={async (r) => {
-          flash(`Indexed ${r.doc_id} — ${r.pages} pages`);
-          await loadHealth(); await loadFilings();
-        }}
-      />
+      <main className={"spread desk-spread show-" + view}>
+        <section className="page verso" aria-label="Question and answer">
+          <div className="verso-inner">
+            <div className="running">
+              <span>Recto</span>
+              <span>{phase === "reading" ? "Reading" : phase === "done" ? "Answered" : "Ask"}</span>
+            </div>
+            <AskSheet q={q} setQ={setQ} onAsk={ask} busy={phase === "reading"}
+                      scopeName={scopeName} filings={filings} onScope={setScope}
+                      suggest={phase === "idle"} />
+            {phase === "reading" && <Stages events={events} started={started} nameOf={nameOf} />}
+            {phase === "done" && answer && (
+              <AnswerSheet answer={answer} activeNote={activeNote} onNote={openNote} nameOf={nameOf} />
+            )}
+          </div>
+        </section>
+        <section className="page recto" aria-label="Source pages">{recto}</section>
+      </main>
 
-      <AnimatePresence>
-        {toast && (
-          <motion.div className={"toast" + (toast.err ? " err" : "")}
-            initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }}>
-            <span className="td" />{toast.msg}
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <CommandPalette open={cmd} onClose={() => setCmd(false)} filings={filings}
+                      onScope={pickScope} onAsk={(t) => ask(t)} onPick={setModal} onTheme={toggleTheme} />
+      <CompanyModal ticker={modal} onClose={() => setModal(null)} onRead={pickScope}
+                    onIndexed={async (r) => { flash(`Indexed ${r.doc_id}, ${r.pages} pages`); await load(); }} />
+      {toast && <div className={"toast" + (toast.err ? " err" : "")} role="status">{toast.msg}</div>}
     </div>
   );
 }
+

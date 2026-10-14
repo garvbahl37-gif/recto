@@ -1,60 +1,58 @@
-# InsightLedger
+# Recto
 
-**Visual-first document intelligence — multi-agent visual-RAG over financial &
-compliance filings, with region-level citations and an eval-gated pipeline.**
+**Every figure, traced to its page.** Recto reads SEC filings and answers
+questions about them. Each figure in an answer is ticked and footnoted, the
+filing page it came from is open beside it with the passage circled, and when
+the filing doesn't say something, Recto doesn't write it.
 
-**[Live demo](https://insightledger-opal.vercel.app)** · [console](https://insightledger-opal.vercel.app/app)
-· [API](https://insightledger-edib.onrender.com/health)
+**[Live demo](https://insightledger-opal.vercel.app)** · [open Recto](https://insightledger-opal.vercel.app/app)
+· [API health](https://insightledger-edib.onrender.com/health)
 
-_The demo runs on free tiers: the frontend is on Vercel's CDN, and the Python
-service sleeps when idle — so the first question after a quiet spell takes ~60s
-while it wakes and re-ingests its seed filings from EDGAR. Every one after that
-is fast._
+_The demo runs on free tiers. The page loads instantly from Vercel's CDN; the
+reading service on Render sleeps when idle, so the first question after a quiet
+spell waits about a minute for it to wake. Every question after that takes
+roughly 7 to 15 seconds with the live model._
 
-Most "RAG projects" chunk text → embed → cosine → stuff into an LLM. Real
-financial documents lose 30–60% of their meaning that way: merged table cells
-collapse, chart axes vanish, stamps and signatures disappear. InsightLedger
-keeps the **rendered page** in the loop — retrieval runs over page *images*
-(ColPali/ColQwen late-interaction), a VLM reads them, a **verifier agent**
-grounds every claim to a specific page region, and the whole system abstains
-when the answer isn't there.
-
-> Ask *"Which segment drove ACME's operating margin improvement and by how much
-> did it grow?"* — the answer lives in a chart + a footnoted table, and you get
-> it back with the exact regions highlighted.
+Most retrieval projects chunk text, embed it, take the nearest paragraphs and
+hand them to a model. Financial filings lose a lot that way: a table's figures
+lose their columns, so the model has to guess which year a number belongs to.
+Recto keeps the **page** in the loop. It retrieves whole pages, a model reads
+them and writes down claims with verbatim quotes, a **verifier** checks every
+claim against the page it cites, and the answer is written from verified claims
+only, or not at all.
 
 ```
-router ─▶ retriever ─▶ extractor ─▶ verifier ─┐(low confidence)
-   ▲                                            │  widen k, retry
-   └──────────────── retriever ◀────────────────┘
-                                                └▶ synthesizer ─▶ grounded answer
+router ─▶ retriever ─▶ extractor ─▶ verifier ─┬─(confident)──▶ synthesizer ─▶ answer
+                ▲                              │
+                └──────────── widen ◀──────────┘ (low confidence: read 3 more pages)
 ```
 
 ## Screenshots
 
-_Runs fully local (no API key, no GPU) over live SEC filings._
-
-**Landing** — what the system does, argued with real footnotes to real filings
-![Landing](docs/screenshots/00-landing.png)
-
-**Console** — the corpus, the question box, and what is currently indexed
-![Console](docs/screenshots/01-dashboard.png)
-
-**Grounded answer** — each sentence carries a footnote to the page region it came
-from, with the quoted source in the margin beside it
+**The answer, facing its page.** The console is an open book: the question and
+answer on the left, the filing page it rests on on the right, with the figure
+circled in pencil and a thumb-index tab for each source.
 ![Answer](docs/screenshots/02-answer-result.png)
 
-**Company browser** — search any of ~1M EDGAR filers and index any filing live
+**Landing.** The hero is the product: NVIDIA's real page 69, its revenue
+figure circled as the page loads.
+![Landing](docs/screenshots/00-landing.png)
+
+**Asking.** The shelf shows what's indexed, with each spine's thickness set by
+its page count.
+![Console](docs/screenshots/01-dashboard.png)
+
+**Any company on EDGAR.** Search any filer and index any filing live.
 ![Company browser](docs/screenshots/03-company-browser.png)
 
-**⌘K** — jump to a filing, ask a question, or index a company
+**⌘K.** Jump to a filing, ask a question, or add a company.
 ![Command palette](docs/screenshots/04-command-palette.png)
 
 ---
 
 ## Why it's not an API wrapper
 
-| Production concern | How InsightLedger addresses it |
+| Production concern | How Recto addresses it |
 |---|---|
 | **Retrieval quality** | Visual late-interaction (MaxSim) over page images, not lossy text |
 | **Multi-agent orchestration** | LangGraph graph with a real **verify → re-retrieve** cycle |
@@ -69,7 +67,7 @@ from, with the quoted source in the margin beside it
 Measured on a 16-item golden set (lookups, cross-page/chart reasoning, and
 adversarial *unanswerable* questions) — full numbers in [docs/METRICS.md](docs/METRICS.md):
 
-| Metric | naive text-RAG | InsightLedger | Δ |
+| Metric | naive text-RAG | Recto | Δ |
 |---|---|---|---|
 | Retrieval recall@k | 0.938 | **1.000** | +0.062 |
 | Faithfulness (grounded) | 0.000 | **1.000** | +1.000 |
@@ -105,7 +103,7 @@ citations, eval) works with nothing configured.
 |---|---|---|
 | Page embeddings | hashed multi-vector + MaxSim | **ColQwen2** visual (local GPU) |
 | Vector store | in-process numpy MaxSim (persisted) | **Qdrant** multi-vector (MAX_SIM) |
-| LLM | grounded deterministic heuristics | **Claude** (`ANTHROPIC_API_KEY`) |
+| LLM | grounded deterministic heuristics | **gpt-oss on Ollama Cloud** (`OLLAMA_API_KEY`) or **Claude** (`ANTHROPIC_API_KEY`) |
 | Graph | LangGraph if installed, else linear | **LangGraph** cycle |
 | Ingestion | synthetic fixture (eval only) | **SEC EDGAR** live filings (default) |
 
@@ -113,11 +111,17 @@ citations, eval) works with nothing configured.
 insightledger backends   # -> {"embedder":"stub","vector_store":"memory","llm":"stub","graph":"langgraph"}
 ```
 
-**LLM tier.** `IL_LLM=auto` runs the fully-local stub by default; set
-`ANTHROPIC_API_KEY` to opt into **Claude** for production-grade generation and
-LLM-driven **QA-generation** (`insightledger qagen --ticker AAPL`). No provider
-is ever required — and any init failure falls back to the stub rather than crash.
-**Never commit an API key** — `.env` is gitignored; `.env.example` is the template.
+**LLM tier.** `IL_LLM=auto` runs the fully local stub by default. Set
+`OLLAMA_API_KEY` to read with **gpt-oss on Ollama Cloud**: `gpt-oss:20b` for
+lookups and verification, `gpt-oss:120b` for questions that need reasoning
+across pages. Both are env vars (`IL_OLLAMA_MODEL`, `IL_OLLAMA_MODEL_CHEAP`),
+so moving to Kimi is a config change once the account has credits. Setting
+`ANTHROPIC_API_KEY` uses Claude instead. Whatever the model writes is checked
+against the pages before it reaches you: a claim must quote its page verbatim,
+the verifier judges each claim against its own page only, and any citation the
+model invents is removed. A failed or rate-limited call falls back to the
+stub for that step instead of failing the request.
+**Never commit an API key**: `.env` is gitignored, `.env.example` is the template.
 
 ## Quickstart
 
@@ -127,16 +131,18 @@ export PYTHONPATH=src                     # or: pip install -e .
 export IL_EDGAR_USER_AGENT="Your Name you@example.com"   # SEC fair-access policy
 
 make serve                                # web UI + API at http://localhost:8000
-                                          #   ↳ ingests AAPL, MSFT, NVDA 10-Ks LIVE on first boot
+                                          #   ↳ ingests 13 companies' 10-Ks live on first boot
 make eval                                 # eval harness + CI gate (labelled fixture, offline)
-make compare                              # text-RAG baseline vs InsightLedger
+make compare                              # text-RAG baseline vs Recto
 ```
 
 The app runs on **live SEC EDGAR filings — no mock data**. First boot ingests
-the seed tickers (`IL_SEED_TICKERS`, default `AAPL,MSFT,NVDA`); add more from the
-UI sidebar or `POST /ingest {ticker}`. Modern 10-Ks are inline-XBRL, so ingestion
-parses with BeautifulSoup/lxml, strips the XBRL header, and splits the prose into
-canonical **Item** sections (Business, Risk Factors, MD&A, …).
+the seed tickers (`IL_SEED_TICKERS`; by default Apple, Microsoft, NVIDIA,
+Alphabet, Amazon, Meta, Tesla, JPMorgan Chase, Visa, Johnson & Johnson, Walmart,
+Eli Lilly and Netflix), and seeds added later are ingested on the next boot. Add
+more from the shelf or `POST /ingest {ticker}`. Modern 10-Ks are inline-XBRL, so
+ingestion parses with BeautifulSoup/lxml, strips the XBRL header, and keeps the
+**whole** filing, up to 400 pages (JPMorgan's runs to 172).
 
 > The eval harness uses a small labelled synthetic corpus as a **test fixture**
 > (it needs ground-truth page/region answers) in an isolated index — it is never
@@ -160,25 +166,28 @@ CITATIONS:
 difficulty=complex confidence=1.00 model=stub retries=0 cost=$0.000000 latency=... trace=...
 ```
 
-## Web UI (React dashboard)
+## Web UI
 
-`make serve` → open <http://localhost:8000>. A premium **React + Recharts +
-framer-motion** dashboard (Vite build, Inter + Lucide, served by FastAPI):
+`make serve`, then open <http://localhost:8000>. The interface is designed as a
+marked-up proof, and one colour rule carries it: **black ink is the filing's
+own words, red pencil is Recto's judgement.**
 
-- a **⌘K command palette** — jump to a filing, run a query, ingest a company, or
-  toggle theme;
-- a **company browser** over the **entire EDGAR universe** (~1M filers) — search any
-  company, view its **entire filing history** (10-K / 10-Q / 8-K / 20-F / proxy),
-  and ingest any specific filing live;
-- a hero with **animated counters**, an **AI status bar**, and stat cards with
-  **sparklines**;
-- per-answer **visualizations**: a confidence gauge, a verifier grounding donut,
-  and a retrieval MaxSim bar chart;
-- the animated **agent pipeline**, the answer with inline citation chips, the
-  **cited page regions highlighted** with their filing section, the verifier's
-  per-claim verdicts, and a "how it works" methodology panel;
-- layered glass surfaces, gradient-mesh lighting, light/dark themes, and
-  reduced-motion support; abstained questions show *"no fabricated answer."*
+- **The spread.** The console is an open book. The verso holds the question and
+  the answer; the recto holds the filing page the answer rests on, typeset from
+  the page's real text, with the cited passage circled in a hand-drawn pencil
+  loop. Thumb-index tabs on the fore-edge turn between sources.
+- **Live stages.** While a question runs, each stage (route, pull pages, read,
+  check, write) is ticked off as the server reports it over Server-Sent
+  Events, and the recto lists the pages being read.
+- **Marks.** A tick means a claim agreed with its page, a loop marks where it
+  rests, a strike-through marks a claim the verifier left out, and a cross
+  means nothing was written because no page answered the question.
+- **The shelf.** Indexed filings stand as spines, thick in proportion to their
+  page count. Add any EDGAR filer from the same page.
+- **Type.** Sofia Sans Extra Condensed for display, Sofia Sans for the
+  interface, and Tinos (metric-compatible with the Times New Roman EDGAR uses)
+  for anything quoted from a filing. Light and dark, responsive down to phones,
+  reduced motion respected.
 
 The built assets are committed, so **the UI runs with just Python**. To develop
 the frontend:
@@ -204,12 +213,14 @@ docker compose up --build                  # app + Qdrant
 
 | Route | Purpose |
 |---|---|
-| `GET /` | premium dashboard web UI |
+| `GET /` · `/app` | landing page · the reading console |
 | `POST /query` | `{question, top_k?, doc_ids?}` → grounded `Answer` |
+| `POST /query/stream` | same, reported stage by stage as Server-Sent Events, then the answer |
 | `POST /ingest` | `{ticker, form?, accession?}` → index the latest (or a specific) EDGAR filing |
 | `GET /tickers?q=` | search the entire EDGAR universe (~1M filers, ticker or CIK) |
 | `GET /company?ticker=` | company profile + full filing history (browse any filing) |
 | `GET /documents` · `/documents/{id}` | corpus + page/region/section detail |
+| `GET /documents/{id}/pages/{n}` | one page with its place in the filing |
 | `GET /trace/{trace_id}` | per-request agent span trace |
 | `GET /health` · `POST /eval` | backends/index size · run the gate |
 
@@ -250,15 +261,21 @@ splits the two for speed:
 | Piece | Host | Notes |
 |---|---|---|
 | Frontend (`/`, `/app`) | Vercel | Static build on the CDN; loads instantly |
-| API (`/query`, `/documents`, …) | Render | Docker, free plan, sleeps when idle |
+| API (`/query`, `/query/stream`, `/documents`, …) | Render | Docker, free plan, sleeps when idle |
 
 `vercel.json` rewrites the API paths from the Vercel domain to the Render
-service, so the frontend keeps using relative URLs and there is no CORS setup.
+service, so the frontend keeps using relative URLs and needs no CORS setup.
+
+The Docker build ingests all thirteen seed filings from EDGAR and bakes the
+index into the image (1,227 pages, ~35 MB of vectors, ~305 MB resident), so a
+cold start loads the index from disk in under a second instead of re-fetching
+filings. The model key is a Render environment variable, never part of the
+image or the repository.
 
 Vercel redeploys automatically on push to `main`. The Render service was
 created through the API rather than the dashboard, so it has no GitHub webhook
-and does **not** auto-deploy — redeploy it from the Render dashboard, or
-connect the repo there once to turn auto-deploy on.
+and does **not** auto-deploy: redeploy it from the Render dashboard, or connect
+the repo there once to turn auto-deploy on.
 
 To run the whole thing yourself with no hosting at all:
 

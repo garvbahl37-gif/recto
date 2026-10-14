@@ -1,8 +1,9 @@
-// Starter questions. Phrased the way an analyst would actually ask them.
+// Starter questions — each one answered correctly by the indexed filings,
+// with the figure circled on its page.
 export const QUESTIONS = [
-  "What does management flag as its most significant risk factors?",
-  "How is supply chain and manufacturing concentration described?",
-  "What is said about competition and pricing pressure?",
-  "How does the company approach cybersecurity risk?",
-  "What legal proceedings or regulatory investigations are disclosed?",
+  { q: "How much net income did JPMorgan report?", doc: "JPM" },
+  { q: "How much did Tesla spend on research and development?", doc: "TSLA" },
+  { q: "What was Meta's advertising revenue?", doc: "META" },
+  { q: "What was NVIDIA's total revenue in fiscal 2026?", doc: "NVDA" },
+  { q: "What are Netflix's most significant risk factors?", doc: "NFLX" },
 ];

@@ -1,243 +1,297 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { api } from "./api.js";
 import { Icon } from "./icons.jsx";
+import { NVDA_PAGE, SHELF } from "./lib/snapshot.js";
+import Wordmark from "./components/Wordmark.jsx";
+import FilingPage from "./components/FilingPage.jsx";
+import Shelf from "./components/Shelf.jsx";
+import { Cross, Struck, Tick } from "./components/Pencil.jsx";
 
-/* The page argues for the product by being the product: the opening paragraph
-   carries real footnotes, and they resolve to real text from real 10-Ks in the
-   margin beside it. Quotes below are verbatim from the filings cited. */
-const HERO_NOTES = [
-  {
-    n: 1, ticker: "AAPL", section: "Item 7", page: 36,
-    quote: "Control is generally transferred when the Company has a present right to payment and title and the significant risks and rewards of ownership of products or services are transferred to its customers.",
-  },
-  {
-    n: 2, ticker: "NVDA", section: "Item 1A", page: 12,
-    quote: "The following risk factors should be considered in addition to the other information in this Annual Report on Form 10-K.",
-  },
-];
+const REPO = "https://github.com/garvbahl37-gif/InsightLedger";
 
-const STAGES = [
-  ["Router", "Reads the question and decides whether it is a lookup or needs reasoning across several pages, then sizes retrieval to match. In production this is also what sends cheap questions to a cheap model."],
-  ["Retriever", "Searches page images with late-interaction MaxSim rather than cosine similarity over text chunks, so a number keeps its column header and a footnote keeps the line it belongs to."],
-  ["Extractor", "Reads the retrieved pages and writes down atomic claims, each pinned to the region of the page it was taken from."],
-  ["Verifier", "Checks each claim against its own cited region. When confidence comes back low, the graph loops back and retrieves more — it is a cycle, not a chain."],
-  ["Synthesizer", "Writes the answer out of verified claims only, footnoting each one. When nothing survives verification it writes nothing and says why."],
+/* The same JPMorgan question, timed against the live service: each stage's
+   event arrived at these offsets. */
+const RUN = [
+  ["Route the question", 0.1, "A lookup, so five pages are enough."],
+  ["Pull the pages", 0.1, "Rare words in the question count for more than common ones, and a page that prints “Net income” beside a figure moves to the front. Pages 15, 139, 171, 16 and 118 come back."],
+  ["Read them for claims", 5.4, "gpt-oss reads those pages and writes down claims, each carrying a quote copied from its page."],
+  ["Check each claim", 7.2, "The quote has to be on the page, character for character. Then a second pass asks whether the claim answers the question at all."],
+  ["Write the answer", 8.8, "Only checked claims are used, and every sentence keeps its footnote."],
 ];
 
 const RESULTS = [
-  ["Retrieval recall@k", "0.938", "1.000"],
-  ["Faithfulness", "0.000", "1.000"],
-  ["Answer accuracy", "0.812", "1.000"],
-  ["Citation region IoU", "0.000", "1.000"],
-  ["Hallucination rate", "0.188", "0.000"],
+  ["Answer pages retrieved", "0.938", "1.000"],
+  ["Claims faithful to their page", "0.000", "1.000"],
+  ["Answers correct", "0.812", "1.000"],
+  ["Citation lands on the right region", "0.000", "1.000"],
+  ["Answers with an invented fact", "0.188", "0.000"],
 ];
 
-export default function Landing({ isDark, toggleTheme, onEnter }) {
-  const [lit, setLit] = useState(null);
+/* NVIDIA's geographic revenue table, as printed on page 69 (in millions). */
+const TABLE = [
+  ["United States", "149,617", "77,482", "31,533"],
+  ["Taiwan", "42,345", "23,600", "14,912"],
+  ["China, including Hong Kong", "19,677", "25,048", "12,330"],
+  ["Other", "4,299", "4,367", "2,147"],
+];
 
-  const Marker = ({ n }) => (
-    <button
-      className={"fn" + (lit === n ? " on" : "")}
-      onMouseEnter={() => setLit(n)}
-      onMouseLeave={() => setLit(null)}
-      onClick={() => document.getElementById("hn-" + n)?.scrollIntoView({ block: "nearest", behavior: "smooth" })}
-      aria-label={`Source ${n}`}
-    >
-      {n}
-    </button>
-  );
+export default function Landing({ isDark, toggleTheme, onOpen }) {
+  const [shelf, setShelf] = useState(SHELF);
+  useEffect(() => {
+    let alive = true;
+    api.documents().then((d) => { if (alive && d.documents?.length) setShelf(d.documents); })
+      .catch(() => { /* the snapshot stands in while the API sleeps */ });
+    return () => { alive = false; };
+  }, []);
+  const pages = shelf.reduce((a, f) => a + f.pages, 0);
+  const open = (e) => { e.preventDefault(); onOpen(); };
 
   return (
     <div className="lp">
-      <nav className="lp-nav">
-        <a className="wordmark" href="/" style={{ textDecoration: "none", color: "inherit" }}>
-          <span className="a">Insight</span><span className="b">Ledger</span>
-        </a>
+      <header className="lp-head">
+        <Wordmark />
+        <nav className="lp-nav" aria-label="Sections">
+          <a href="#reads">How it reads</a>
+          <a href="#marks">The marks</a>
+          <a href="#measured">Measured</a>
+        </nav>
         <span className="sp" />
-        <a href="#pages" className="hide-sm">Why pages</a>
-        <a href="#method" className="hide-sm">Method</a>
-        <a href="#results" className="hide-sm">Results</a>
-        <button className="iconbtn" onClick={toggleTheme} aria-label="Switch theme">
+        <button className="iconbtn" onClick={toggleTheme} aria-label={isDark ? "Switch to light" : "Switch to dark"}>
           <Icon name={isDark ? "sun" : "moon"} size={17} />
         </button>
-        <button className="btn btn-primary" onClick={onEnter}>Open the console</button>
-      </nav>
+        <a className="btn btn-ink" href="/app" onClick={open}>Open Recto</a>
+      </header>
 
-      <div className="lp-wrap">
-        {/* ---------- hero ---------- */}
-        <header className="lp-hero">
-          <div>
-            <h1>Every sentence, back to the page it came from.</h1>
-            <p className="dek">
-              InsightLedger reads SEC filings as pages rather than as scraped text, then answers
-              your question in prose where each claim carries a footnote to the exact region it was
-              drawn from<Marker n={1} /> — including the risk language most summaries paraphrase
-              away<Marker n={2} />. When the filings do not support an answer, it writes none.
+      {/* ---------------------------------------------------------------- hero
+          An open book. The answer on the left, the page it rests on facing it. */}
+      <section className="hero spread" aria-label="Recto, a reader for SEC filings">
+        <div className="page verso">
+          <div className="hero-verso">
+            <div className="running"><span>Recto</span><span>A reader for SEC filings</span></div>
+            <h1 className="hero-h">Every figure, traced to its page.</h1>
+            <div className="demo">
+              <p className="demo-q">What was NVIDIA&rsquo;s total revenue in fiscal 2026?</p>
+              <p className="demo-a">
+                <span className="demo-tick"><Tick size={22} seed="hero" delay={1700} title="Agreed with its page" /></span>
+                $215,938 million.<span className="fn" aria-hidden>1</span>
+              </p>
+            </div>
+            <p className="hero-p">
+              Ask a question about a company&rsquo;s annual report. Every figure in the answer comes
+              back ticked and footnoted, with its page open beside it and the passage circled. If the
+              filing doesn&rsquo;t say it, Recto doesn&rsquo;t write it.
             </p>
-            <div className="lp-cta">
-              <button className="btn btn-primary btn-lg" onClick={onEnter}>Open the console</button>
-              <a className="btn btn-lg btn-line" href="https://github.com/garvbahl37-gif/InsightLedger"
-                 target="_blank" rel="noreferrer">Read the source</a>
-              <span className="cta-note">Runs locally. No API key needed.</span>
+            <div className="hero-cta">
+              <a className="btn btn-ink" href="/app" onClick={open}>Open Recto</a>
+              <a className="btn btn-line" href={REPO} target="_blank" rel="noreferrer">Read the source</a>
             </div>
+            <p className="hero-small num">{shelf.length} companies on the shelf, {pages.toLocaleString()} pages. No sign-up.</p>
           </div>
-
-          <aside className="lp-margin">
-            <div className="mt">Sources — as they appear in the filings</div>
-            <div className="notes">{HERO_NOTES.map((h) => (
-              <div key={h.n} id={"hn-" + h.n} className={"note" + (lit === h.n ? " on" : "")}
-                   onMouseEnter={() => setLit(h.n)} onMouseLeave={() => setLit(null)}>
-                <span className="nn">{h.n}</span>
-                <div>
-                  <div className="nsrc">
-                    <span className="tk">{h.ticker}</span>
-                    <span>{h.section}</span>
-                    <span className="pg">page {h.page}</span>
-                  </div>
-                  <p className="nq">“{h.quote}”</p>
-                </div>
-              </div>
-            ))}</div>
-          </aside>
-        </header>
-
-        {/* ---------- the argument for pages ---------- */}
-        <section className="lp-sec" id="pages">
-          <h2>A filing is not a wall of text.</h2>
-          <p className="sub">
-            The usual pipeline flattens a document before it ever reaches the model: chunk, embed,
-            match, paste. That works on prose and falls apart on the parts of a 10-K people actually
-            argue about — segment tables, footnote markers, anything where meaning lives in the
-            layout. Here is one table, and the same table after a text extractor is done with it.
-          </p>
-          <div className="lp-split">
-            <div className="lp-panel">
-              <div className="ph"><span>On the page</span><span className="taggood">meaning intact</span></div>
-              <div className="pb">
-                <table className="minitable">
-                  <caption>Segment operating income — years ended</caption>
-                  <thead>
-                    <tr><th>Segment</th><th className="r">2026</th><th className="r">2025</th><th className="r">Change</th></tr>
-                  </thead>
-                  <tbody>
-                    <tr><td>Data Center</td><td className="r">78,420</td><td className="r">47,525</td><td className="r">+65%</td></tr>
-                    <tr><td>Gaming</td><td className="r">11,350</td><td className="r">10,447</td><td className="r">+9%</td></tr>
-                    <tr><td>Professional Visualization</td><td className="r">1,916</td><td className="r">1,553</td><td className="r">+23%</td></tr>
-                  </tbody>
-                  <tfoot><tr><td>Total</td><td className="r">91,686</td><td className="r">59,525</td><td className="r">+54%</td></tr></tfoot>
-                </table>
-              </div>
-            </div>
-            <div className="lp-panel">
-              <div className="ph"><span>After text extraction</span><span className="tagbad">columns lost</span></div>
-              <div className="pb">
-                <p className="flattened">
-                  Segment operating income years ended Segment 2026 2025 Change Data Center{" "}
-                  <mark>78,420 47,525 +65%</mark> Gaming 11,350 10,447 +9% Professional
-                  Visualization 1,916 1,553 +23% Total 91,686 59,525 +54%
-                </p>
-                <p style={{ fontSize: 13, color: "var(--ink-3)", margin: "14px 0 0", lineHeight: 1.6 }}>
-                  Ask which segment grew fastest and a model now has to guess which number belongs to
-                  which year. That guess is where a hallucination comes from.
-                </p>
-              </div>
-            </div>
+          <span className="folio num">68</span>
+        </div>
+        <div className="page recto">
+          <div className="hero-recto">
+            <div className="running"><span>NVIDIA, Form 10-K</span>
+              <span className="num">Page {NVDA_PAGE.page_number} of {NVDA_PAGE.total_pages}</span></div>
+            <FilingPage text={NVDA_PAGE.text} quotes={[NVDA_PAGE.quote]} seed="hero-nvda" delay={650} />
           </div>
-        </section>
+          <span className="folio num">{NVDA_PAGE.page_number}</span>
+        </div>
+      </section>
 
-        {/* ---------- method ---------- */}
-        <section className="lp-sec" id="method">
-          <h2>Five agents, and one of them is allowed to say no.</h2>
-          <p className="sub">
-            A question passes through a graph that can send itself backwards. The verifier is the
-            reason the system can decline: if a claim will not ground against the page it cites, it
-            does not reach the answer.
+      {/* ------------------------------------------------- a page, not a paragraph */}
+      <section className="lp-sec" id="pages">
+        <div className="sec-grid">
+          <h2 className="sec-h">A page, not a paragraph.</h2>
+          <p className="sec-p">
+            Most retrieval tools cut a filing into paragraphs of text before anything reads it.
+            Tables come through that badly: a figure loses its column, and the model has to guess
+            which year a number belongs to. Recto keeps the page whole, so a line item and its
+            figures stay together.
           </p>
-          <div className="lp-stages">
-            {STAGES.map(([t, d], i) => (
-              <div className="lp-stage" key={t}>
-                <span className="sn">{String(i + 1).padStart(2, "0")}</span>
-                <span className="st">{t}</span>
-                <span className="sdesc">{d}</span>
-              </div>
+        </div>
+        <div className="pair">
+          <figure className="sheet">
+            <figcaption className="sheet-cap">As NVIDIA printed it, page 69</figcaption>
+            <table className="ftable">
+              <thead>
+                <tr><th>In millions</th><th>Jan 25, 2026</th><th>Jan 26, 2025</th><th>Jan 28, 2024</th></tr>
+              </thead>
+              <tbody>
+                {TABLE.map(([a, b, c, d]) => (
+                  <tr key={a}><td>{a}</td><td>{b}</td><td>{c}</td><td>{d}</td></tr>
+                ))}
+              </tbody>
+              <tfoot><tr><td>Total revenue</td><td>215,938</td><td>130,497</td><td>60,922</td></tr></tfoot>
+            </table>
+          </figure>
+          <figure className="sheet">
+            <figcaption className="sheet-cap">The same table after text extraction</figcaption>
+            <p className="flat">
+              Geographic Revenue based upon Customer Headquarters Location (1): (In millions) United
+              States $ 149,617 $ 77,482 $ 31,533 Taiwan (2) <mark className="flat-mark">42,345 23,600 14,912</mark>{" "}
+              China (including Hong Kong) 19,677 25,048 12,330 Other 4,299 4,367 2,147 Total revenue
+              $ 215,938 $ 130,497 $ 60,922
+            </p>
+            <p className="pencil-note">Which of these is fiscal 2025? The columns are gone, so a
+              model has to guess.</p>
+          </figure>
+        </div>
+      </section>
+
+      {/* ----------------------------------------------------------- how it reads */}
+      <section className="lp-sec" id="reads">
+        <div className="sec-grid">
+          <h2 className="sec-h">How Recto reads a question.</h2>
+          <p className="sec-p">
+            &ldquo;How much net income did JPMorgan report?&rdquo;, timed against the live service.
+            Each stage reports back as it finishes, and inside Recto you watch the same list tick
+            itself off.
+          </p>
+        </div>
+        <div className="run">
+          <div className="run-axis" aria-hidden>
+            {[0, 2, 4, 6, 8].map((s) => (
+              <span key={s} className="num" style={{ left: `${(s / 9) * 100}%` }}>{s} s</span>
             ))}
           </div>
-        </section>
-
-        {/* ---------- abstention ---------- */}
-        <section className="lp-sec">
-          <h2>The useful part is what it refuses to write.</h2>
-          <p className="sub">
-            Most retrieval systems will answer anything you ask them, because nothing in the
-            pipeline is responsible for checking. Ask this one something the filings do not cover
-            and you get a stated absence instead of a confident paragraph.
+          <ol className="run-list">
+            {RUN.map(([what, t, how]) => (
+              <li key={what} className="run-row">
+                <div className="run-track" aria-hidden>
+                  <span className="run-bar" style={{ width: `${Math.max(0.6, (t / 9) * 100)}%` }} />
+                  <span className="run-tick" style={{ left: `${(t / 9) * 100}%` }}>
+                    <Tick size={16} seed={"run" + what} animate={false} />
+                  </span>
+                </div>
+                <div className="run-text">
+                  <span className="run-what">{what}</span>
+                  <span className="run-t num">{t.toFixed(1)} s</span>
+                  <span className="run-how">{how}</span>
+                </div>
+              </li>
+            ))}
+          </ol>
+          <p className="run-result">
+            The answer: net income of $57,048 million for 2025 and $58,471 million for 2024, both
+            from page 15 of JPMorgan&rsquo;s 10-K.
           </p>
-          <div className="lp-abstain">
-            <div className="qbubble">
-              <div className="ql">Asked of a corpus of 10-Ks</div>
-              What did the CEO say about the acquisition on the Q3 earnings call?
-            </div>
-            <div className="abstain">
-              <b>Abstained</b>
-              Nothing in the retrieved pages supports an answer to this question, so none was
-              written. Try widening the scope or ingesting a filing that covers it.
-            </div>
+        </div>
+      </section>
+
+      {/* -------------------------------------------------------------- the marks */}
+      <section className="lp-sec" id="marks">
+        <div className="sec-grid">
+          <h2 className="sec-h">Two colours, and what they mean.</h2>
+          <p className="sec-p">
+            Black is the filing&rsquo;s own words. Red is Recto&rsquo;s judgement, made in pencil, so
+            you can always tell what the company said from what the machine concluded about it.
+          </p>
+        </div>
+        <dl className="marks">
+          <div className="mark-cell sheet">
+            <dt><Tick size={64} seed="spec-tick" animate={false} /></dt>
+            <dd><b>Agreed.</b> The claim matches the page it cites, figure for figure.</dd>
           </div>
-        </section>
-
-        {/* ---------- results ---------- */}
-        <section className="lp-sec" id="results">
-          <h2>Measured against a text-RAG baseline.</h2>
-          <p className="sub">
-            A 16-item golden set of lookups, cross-page reasoning, and deliberately unanswerable
-            questions, run against both pipelines on the same corpus. Reproduce it with{" "}
-            <span className="mono">make compare</span>.
-          </p>
-          <table className="lp-results">
-            <thead>
-              <tr>
-                <th>Metric</th>
-                <th className="r">Naive text-RAG</th>
-                <th className="r">InsightLedger</th>
-              </tr>
-            </thead>
-            <tbody>
-              {RESULTS.map(([m, a, b]) => (
-                <tr key={m}>
-                  <td className="m">{m}</td>
-                  <td className="r">{a}</td>
-                  <td className="r win">{b}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <p className="caveat">
-            Read these honestly: they come from the deterministic local backend run over a small,
-            hand-built golden set whose questions are answerable from the corpus, so the grounded
-            pipeline scores near-perfectly and the baseline has no citation mechanism to score at
-            all. They demonstrate that the eval harness and the grounding contract work, not that
-            any system is flawless.
-          </p>
-        </section>
-
-        {/* ---------- close ---------- */}
-        <section className="lp-sec">
-          <h2>Start with one filing.</h2>
-          <p className="sub">
-            Search any EDGAR filer, index a filing straight from the SEC, and ask it something. It
-            runs on your machine against live filings with no key and no GPU.
-          </p>
-          <div className="lp-cta">
-            <button className="btn btn-primary btn-lg" onClick={onEnter}>Open the console</button>
+          <div className="mark-cell sheet">
+            <dt>
+              <span className="spec-loop">
+                <FilingPage text="Total revenue $ 215,938" quotes={["215,938"]} seed="spec-loop" animate={false} />
+              </span>
+            </dt>
+            <dd><b>Where it rests.</b> The passage a claim was taken from, circled on the right-hand page.</dd>
           </div>
-        </section>
+          <div className="mark-cell sheet">
+            <dt><span className="spec-strike"><Struck seed="spec-s">Margins hit a record</Struck></span></dt>
+            <dd><b>Left out.</b> A claim that didn&rsquo;t hold up, kept in view so you can see what was rejected.</dd>
+          </div>
+          <div className="mark-cell sheet">
+            <dt><span className="spec-fn">$57,048 million<span className="fn">1</span></span></dt>
+            <dd><b>Footnote.</b> Select it and the page turns to the source.</dd>
+          </div>
+          <div className="mark-cell sheet">
+            <dt><Cross size={58} seed="spec-x" animate={false} /></dt>
+            <dd><b>Nothing written.</b> No page answers the question, so there is no answer to read.</dd>
+          </div>
+        </dl>
+      </section>
 
-        <footer className="lp-foot">
-          <span>InsightLedger</span>
-          <span className="sp" />
-          <a href="https://github.com/garvbahl37-gif/InsightLedger" target="_blank" rel="noreferrer">Source</a>
-          <a href="https://www.sec.gov/edgar" target="_blank" rel="noreferrer">SEC EDGAR</a>
-        </footer>
-      </div>
+      {/* ---------------------------------------------------------------- refusal */}
+      <section className="lp-sec">
+        <div className="sec-grid">
+          <h2 className="sec-h">It won&rsquo;t write what the filing doesn&rsquo;t say.</h2>
+          <p className="sec-p">
+            A 10-K doesn&rsquo;t record what a chief executive said on an earnings call. Most assistants
+            answer anyway. Recto checks every claim against a page before it writes, so when no page
+            supports one, it writes nothing and says so.
+          </p>
+        </div>
+        <div className="refuse sheet">
+          <p className="refuse-q">&ldquo;What did the CEO say on the Q3 earnings call?&rdquo;</p>
+          <div className="refusal">
+            <Cross size={30} seed="lp-refuse" animate={false} />
+            <p>Nothing in the pages Recto read answers this, so nothing was written.</p>
+          </div>
+        </div>
+      </section>
+
+      {/* ---------------------------------------------------------------- measured */}
+      <section className="lp-sec" id="measured">
+        <div className="sec-grid">
+          <h2 className="sec-h">Measured against plain text search.</h2>
+          <p className="sec-p">
+            Sixteen questions, including ones the filings can&rsquo;t answer, run through Recto and
+            through a conventional text pipeline on the same documents.
+          </p>
+        </div>
+        <table className="results">
+          <thead><tr><th>Measure</th><th>Text search</th><th>Recto</th></tr></thead>
+          <tbody>
+            {RESULTS.map(([m, a, b]) => (
+              <tr key={m}><td>{m}</td><td className="num">{a}</td><td className="num">{b}</td></tr>
+            ))}
+          </tbody>
+        </table>
+        <p className="caveat">
+          Read these honestly. They come from a small, hand-built set of questions whose answers are
+          in the documents, scored by the deterministic local reader, and the text pipeline has no
+          citations to score at all. They show the grounding contract holding, not a reader that
+          never errs. Reproduce them with <code>make compare</code>.
+        </p>
+      </section>
+
+      {/* ------------------------------------------------------------------ shelf */}
+      <section className="lp-sec">
+        <div className="sec-grid">
+          <h2 className="sec-h">On the shelf.</h2>
+          <p className="sec-p">
+            Thirteen annual reports, every page indexed. Inside Recto you can add any company that
+            files with the SEC; it pulls the filing from EDGAR and reads all of it.
+          </p>
+        </div>
+        <div className="shelf-wrap sheet">
+          <Shelf filings={shelf} active={null} onPick={() => onOpen()} large />
+        </div>
+        <div className="hero-cta">
+          <a className="btn btn-ink" href="/app" onClick={open}>Open Recto</a>
+        </div>
+      </section>
+
+      {/* ---------------------------------------------------------------- colophon */}
+      <footer className="colophon">
+        <h2 className="colophon-h">Colophon</h2>
+        <p>
+          Recto is set in Sofia Sans and Sofia Sans Extra Condensed. Text quoted from filings is set
+          in Tinos, which matches the Times New Roman that EDGAR filings use. Judgements are marked
+          in pencil, <span className="num">#D62B1E</span>. It reads {shelf.length} annual reports,{" "}
+          {pages.toLocaleString()} pages, found by weighted late-interaction matching and read by
+          gpt-oss on Ollama Cloud.
+        </p>
+        <p className="colophon-links">
+          <a className="link" href={REPO} target="_blank" rel="noreferrer">Source</a>
+          <a className="link" href="https://www.sec.gov/edgar/search/" target="_blank" rel="noreferrer">SEC EDGAR</a>
+        </p>
+      </footer>
     </div>
   );
 }

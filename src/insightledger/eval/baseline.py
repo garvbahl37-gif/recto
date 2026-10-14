@@ -82,7 +82,7 @@ def format_compare(cmp: dict) -> str:
         ("citation_iou", b.mean_citation_iou, f.mean_citation_iou),
         ("hallucination", b.hallucination_rate, f.hallucination_rate),
     ]
-    out = ["", f"{'metric':<18}{'text-RAG':>12}{'InsightLedger':>16}{'delta':>10}",
+    out = ["", f"{'metric':<18}{'text-RAG':>12}{'Recto':>16}{'delta':>10}",
            "-" * 56]
     for name, bv, fv in rows:
         out.append(f"{name:<18}{bv:>12.3f}{fv:>16.3f}{(fv-bv):>+10.3f}")

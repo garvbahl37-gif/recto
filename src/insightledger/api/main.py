@@ -24,7 +24,7 @@ from ..knowledge import (ensure_live_index, ensure_sample_index, ingest_filing,
                          ingest_ticker, load_registry)
 from ..schemas import Answer
 
-app = FastAPI(title="InsightLedger", version="0.1.0",
+app = FastAPI(title="Recto", version="0.2.0",
               description="Visual-first document intelligence (visual-RAG + multi-agent).")
 
 _orch: Optional[Orchestrator] = None

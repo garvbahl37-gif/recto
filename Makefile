@@ -19,7 +19,7 @@ query:              ## make Q="..." query
 eval:               ## run the eval harness with the CI gate
 	python -m insightledger.cli eval --gate
 
-compare:            ## text-RAG baseline vs InsightLedger
+compare:            ## text-RAG baseline vs Recto
 	python -m insightledger.cli compare
 
 test:

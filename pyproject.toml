@@ -9,7 +9,7 @@ description = "Visual-first document intelligence: multi-agent visual-RAG over f
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-authors = [{ name = "InsightLedger" }]
+authors = [{ name = "garvbahl37-gif" }]
 
 # Core deps — enough to run the FULL system end-to-end with the deterministic
 # stub backends (no GPU, no API keys). Heavy/real backends live in optional

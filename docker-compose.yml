@@ -13,7 +13,7 @@ services:
       # QDRANT_URL: http://qdrant:6333
       # IL_LLM: claude
       # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-      IL_EDGAR_USER_AGENT: "InsightLedger research you@example.com"
+      IL_EDGAR_USER_AGENT: "Recto research you@example.com"
     depends_on: [qdrant]
 
 volumes:

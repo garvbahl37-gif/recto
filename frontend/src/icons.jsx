@@ -1,18 +1,9 @@
-// Thin Lucide set. Stroke weight is kept light so icons sit at the same visual
-// weight as the text around them rather than shouting over it.
-import {
-  Search, Moon, Sun, FileText, X, Check, Command, Menu, Plus,
-  ChevronRight, CircleDot, ArrowRight, ArrowUpRight,
-} from "lucide-react";
+// A handful of line icons, drawn light so they sit at the weight of the type.
+import { Moon, Search, Sun } from "lucide-react";
 
-const MAP = {
-  search: Search, moon: Moon, sun: Sun, doc: FileText, file: FileText,
-  x: X, check: Check, command: Command, menu: Menu, plus: Plus,
-  chev: ChevronRight, dot: CircleDot, arrow: ArrowRight, arrowup: ArrowUpRight,
-  spark: FileText,
-};
+const MAP = { search: Search, moon: Moon, sun: Sun };
 
-export const Icon = ({ name, size = 16, strokeWidth = 1.5, ...rest }) => {
-  const C = MAP[name] || CircleDot;
-  return <C size={size} strokeWidth={strokeWidth} {...rest} />;
+export const Icon = ({ name, size = 16, strokeWidth = 1.75, ...rest }) => {
+  const C = MAP[name] || Search;
+  return <C size={size} strokeWidth={strokeWidth} aria-hidden {...rest} />;
 };
