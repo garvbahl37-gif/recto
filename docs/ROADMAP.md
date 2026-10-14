@@ -1,6 +1,6 @@
 # Roadmap — toward an institutional AI research platform
 
-InsightLedger today is a **multi-agent visual-RAG system over live SEC filings**:
+Recto today is a **multi-agent visual-RAG system over live SEC filings**:
 full-universe company/filing discovery, LangGraph orchestration (router →
 retriever → extractor → verifier ⟲ → synthesizer), region-grounded citations,
 abstention, an eval harness + CI gate, and a premium React dashboard — running

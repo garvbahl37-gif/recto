@@ -191,6 +191,10 @@ def ingest(req: IngestRequest) -> dict:
     """Fetch + index a live SEC EDGAR filing on demand — the latest of a form,
     or one specific filing when an accession is supplied (company browser)."""
     tk = req.ticker.strip().upper()
+    from ..knowledge import reserve_fetch
+    refusal = reserve_fetch()
+    if refusal:
+        raise HTTPException(429, refusal)
     try:
         if req.accession and req.primary_doc and req.date:
             doc = ingest_filing(tk, req.accession, req.primary_doc, req.form,

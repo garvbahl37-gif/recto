@@ -71,3 +71,34 @@ def test_nothing_is_fetched_for_a_question_that_names_no_company(env):
     s, r, fetched = env
     assert knowledge.fetch_for_question("What are the most significant risk factors?", r, s) == []
     assert fetched == []
+
+
+def test_indexing_a_specific_filing_respects_the_budget_too(env, monkeypatch):
+    """The catalogue's Index button used to add filings without eviction, so the
+    budget could be bypassed through POST /ingest until memory ran out."""
+    s, r, fetched = env                      # max_fetched=1
+
+    class FakeEdgar2:
+        def __init__(self, *a, **k): pass
+        def fetch_specific(self, ticker, accession, primary_doc, form, date):
+            return build_document_from_pages(f"{ticker}-{form}-{date}", f"{ticker} {form}",
+                                             [f"{ticker} page"], source="t://", doc_type=form)
+    monkeypatch.setattr(knowledge, "EdgarClient", FakeEdgar2)
+    knowledge.ingest_filing("ZZA", "1", "a.htm", "10-Q", "2026-01-01", settings=s, retriever=r)
+    knowledge.ingest_filing("ZZB", "2", "b.htm", "10-Q", "2026-02-01", settings=s, retriever=r)
+    reg = knowledge.load_registry(s)
+    fetched_docs = [d for d in reg if not d.startswith("AAA-")]
+    assert len(fetched_docs) <= 1, fetched_docs
+
+
+def test_fetches_are_rate_limited_across_the_service(env):
+    """Anyone can ask a question, so EDGAR fetches share one budget per window:
+    past it, the fetch is refused with a reason instead of hammering the SEC."""
+    s, r, fetched = env
+    s2 = replace(s, max_fetched=50, fetch_rate=2)
+    knowledge._FETCH_TIMES.clear()
+    events = []
+    for q in ["Coca-Cola's revenue?", "PepsiCo's revenue?", "Starbucks' revenue?"]:
+        knowledge.fetch_for_question(q, r, s2, emit=lambda st, **p: events.append((st, p)))
+    assert fetched == ["KO", "PEP"], fetched
+    assert any(st == "fetch_failed" and "limit" in p["message"].lower() for st, p in events)

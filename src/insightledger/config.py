@@ -77,6 +77,9 @@ class Settings:
     # budget are evicted least-recently-used first; seeds never are.
     auto_fetch: bool = True
     max_fetched: int = 16
+    # Anyone can ask a question, so EDGAR fetches share one allowance per ten
+    # minutes across the whole service (question-triggered and POST /ingest).
+    fetch_rate: int = 8
     bootstrap: str = "live"                # live (EDGAR) | sample (fixture, offline)
 
     # Retrieval / routing
@@ -182,6 +185,7 @@ def get_settings() -> Settings:
         seed_form=_env("IL_SEED_FORM", "10-K"),
         auto_fetch=_env("IL_AUTO_FETCH", "1") == "1",
         max_fetched=int(_env("IL_MAX_FETCHED", "16")),
+        fetch_rate=int(_env("IL_FETCH_RATE", "8")),
         bootstrap=_env("IL_BOOTSTRAP", "live"),
         top_k=int(_env("IL_TOP_K", "5")),
         verify_min_confidence=float(_env("IL_VERIFY_MIN_CONFIDENCE", "0.6")),

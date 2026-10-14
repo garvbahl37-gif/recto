@@ -1,6 +1,6 @@
 # Architecture
 
-InsightLedger is a **visual-RAG** system: retrieval and reasoning happen over
+Recto is a **visual-RAG** system: retrieval and reasoning happen over
 rendered document *pages* rather than extracted plaintext, and a multi-agent
 graph turns retrieved pages into a grounded, cited, verified answer — or a
 principled abstention.

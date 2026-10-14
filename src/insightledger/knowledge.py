@@ -65,7 +65,28 @@ def load_registry(s: Optional[Settings] = None) -> dict[str, Document]:
 # ------------------------------------------------- fetched-filing budget ----
 
 _LAST_USED: dict[str, float] = {}
-_FETCH_LOCK = threading.Lock()
+_FETCH_LOCK = threading.RLock()
+_FETCH_TIMES: list[float] = []          # when each recent EDGAR fetch started
+_FETCH_WINDOW = 600.0                    # seconds
+
+
+def reserve_fetch(settings: Optional[Settings] = None) -> Optional[str]:
+    """Claim one EDGAR fetch from the service-wide allowance.
+
+    Returns None when the fetch may go ahead, or the reason it may not. Every
+    path that pulls a filing from EDGAR on a visitor's behalf goes through
+    here, so no visitor can make the server hammer the SEC or fill its memory.
+    """
+    s = settings or get_settings()
+    now = time.time()
+    with _FETCH_LOCK:
+        _FETCH_TIMES[:] = [t for t in _FETCH_TIMES if now - t < _FETCH_WINDOW]
+        if len(_FETCH_TIMES) >= max(0, s.fetch_rate):
+            wait = int(_FETCH_WINDOW - (now - _FETCH_TIMES[0])) + 1
+            return (f"Fetch limit reached: {s.fetch_rate} filings per ten minutes "
+                    f"across the service. Try again in about {max(1, wait // 60)} min.")
+        _FETCH_TIMES.append(now)
+    return None
 _FORM = re.compile(r"-(10-K|10-Q|8-K|20-F|40-F|DEF 14A)-\d{4}-\d{2}-\d{2}$")
 
 
@@ -126,6 +147,10 @@ def fetch_for_question(question: str, retriever: Retriever,
             if have:
                 out += have
                 continue
+            refusal = reserve_fetch(s)
+            if refusal:
+                say("fetch_failed", ticker=tk, company=name, message=refusal)
+                continue
             say("fetch", ticker=tk, company=name)
             t0 = time.time()
             try:
@@ -168,10 +193,13 @@ def ingest_filing(ticker: str, accession: str, primary_doc: str, form: str,
     doc = EdgarClient(s).fetch_specific(ticker, accession, primary_doc, form, date)
     Indexer(embedder=retriever.embedder, store=retriever.store,
             settings=s).index_documents([doc])
-    touch([doc.doc_id])
     reg = dict(load_registry(s))
     reg[doc.doc_id] = doc
     save_registry(list(reg.values()), s)
+    touch([doc.doc_id])
+    # The catalogue's Index button is the same kind of fetch as asking about a
+    # new company; without this the budget could be bypassed through /ingest.
+    evict_over_budget(s, retriever)
     return doc
 
 

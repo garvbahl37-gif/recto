@@ -7,7 +7,7 @@ import FilingPage from "./components/FilingPage.jsx";
 import Shelf from "./components/Shelf.jsx";
 import { Cross, Struck, Tick } from "./components/Pencil.jsx";
 
-const REPO = "https://github.com/garvbahl37-gif/InsightLedger";
+const REPO = "https://github.com/garvbahl37-gif/recto";
 
 /* The same JPMorgan question, timed against the live service: each stage's
    event arrived at these offsets. */
