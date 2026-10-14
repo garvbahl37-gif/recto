@@ -131,18 +131,26 @@ export PYTHONPATH=src                     # or: pip install -e .
 export IL_EDGAR_USER_AGENT="Your Name you@example.com"   # SEC fair-access policy
 
 make serve                                # web UI + API at http://localhost:8000
-                                          #   ↳ ingests 13 companies' 10-Ks live on first boot
+                                          #   ↳ ingests 30 companies' 10-Ks live on first boot
 make eval                                 # eval harness + CI gate (labelled fixture, offline)
 make compare                              # text-RAG baseline vs Recto
 ```
 
 The app runs on **live SEC EDGAR filings — no mock data**. First boot ingests
-the seed tickers (`IL_SEED_TICKERS`; by default Apple, Microsoft, NVIDIA,
-Alphabet, Amazon, Meta, Tesla, JPMorgan Chase, Visa, Johnson & Johnson, Walmart,
-Eli Lilly and Netflix), and seeds added later are ingested on the next boot. Add
-more from the shelf or `POST /ingest {ticker}`. Modern 10-Ks are inline-XBRL, so
-ingestion parses with BeautifulSoup/lxml, strips the XBRL header, and keeps the
-**whole** filing, up to 400 pages (JPMorgan's runs to 172).
+the thirty seed tickers (`IL_SEED_TICKERS`: large filers across tech, finance,
+consumer, health and energy, from Apple to Chevron), and seeds added later are
+ingested on the next boot. **Every other company on EDGAR is a question away**:
+name one and Recto fetches its latest annual report before answering, or browse
+all 8,032 listed companies A to Z inside the app (`GET /companies`), or search
+every filer with or without a ticker. Fetched filings beyond `IL_MAX_FETCHED` are
+evicted least-recently-used; seeds never are.
+
+Modern 10-Ks are inline-XBRL, so ingestion parses with BeautifulSoup/lxml,
+strips the XBRL header, and keeps the **whole** filing in its own order, cover
+page included, splitting only where an "Item" heading starts a line (97–100% of
+the text across large filers; JPMorgan's runs to 314 pages). A 10-K that
+incorporates its statements from the annual report to shareholders (IBM's) is
+read with that Exhibit 13.
 
 > The eval harness uses a small labelled synthetic corpus as a **test fixture**
 > (it needs ground-truth page/region answers) in an isolated index — it is never
@@ -218,6 +226,7 @@ docker compose up --build                  # app + Qdrant
 | `POST /query/stream` | same, reported stage by stage as Server-Sent Events, then the answer |
 | `POST /ingest` | `{ticker, form?, accession?}` → index the latest (or a specific) EDGAR filing |
 | `GET /tickers?q=` | search the entire EDGAR universe (~1M filers, ticker or CIK) |
+| `GET /companies` | every company with a ticker on EDGAR, one row each, A to Z |
 | `GET /company?ticker=` | company profile + full filing history (browse any filing) |
 | `GET /documents` · `/documents/{id}` | corpus + page/region/section detail |
 | `GET /documents/{id}/pages/{n}` | one page with its place in the filing |
@@ -266,10 +275,12 @@ splits the two for speed:
 `vercel.json` rewrites the API paths from the Vercel domain to the Render
 service, so the frontend keeps using relative URLs and needs no CORS setup.
 
-The Docker build ingests all thirteen seed filings from EDGAR and bakes the
-index into the image (1,227 pages, ~35 MB of vectors, ~305 MB resident), so a
-cold start loads the index from disk in under a second instead of re-fetching
-filings. The model key is a Render environment variable, never part of the
+The Docker build ingests all thirty seed filings from EDGAR and bakes the
+index into the image (about 3,900 pages, ~200 MB resident once loaded), along
+with EDGAR's list of every filer, so a cold start loads from disk in about a
+second instead of re-fetching filings. Each distinct vector row is stored once,
+page regions are derived from text rather than stored, and a fetched filing
+costs about its own size in memory. The model key is a Render environment variable, never part of the
 image or the repository.
 
 Vercel redeploys automatically on push to `main`. The Render service was
