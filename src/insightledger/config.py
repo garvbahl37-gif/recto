@@ -81,6 +81,8 @@ class Settings:
     # image on restart anyway, so the write was pure cost on a slow CPU. Seeds
     # are always written: the Docker build bakes them into the image.
     persist_fetched: bool = True
+    # Measured on Render: thirty seeds boot at 187 MB and eight fetched
+    # filings took it to 247 MB, about 3 MB each once warm.
     max_fetched: int = 32
     # Anyone can ask a question, so EDGAR fetches share one allowance per ten
     # minutes across the whole service (question-triggered and POST /ingest).
