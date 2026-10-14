@@ -25,6 +25,7 @@ from typing import Optional, Protocol
 from ..config import Settings, get_settings
 from ..observability.cost import CostMeter
 from ..schemas import BBox, Citation, Claim, Difficulty, RetrievedPage
+from ..words import stem
 
 _WORD = re.compile(r"[A-Za-z0-9%$.\-]+")
 _STOP = {
@@ -42,6 +43,7 @@ _GENERIC_FINANCE = {
     "statements", "consolidated", "results", "financial", "increase", "decrease",
     "value", "amount", "number", "file", "registrant", "pursuant", "requirements",
 }
+_GENERIC_STEMS = {stem(w) for w in _GENERIC_FINANCE}
 _YEAR = re.compile(r"^(19|20)\d{2}$")
 _COMPLEX_HINTS = (
     "change", "yoy", "year-over-year", "compare", "comparison", "versus", "vs",
@@ -51,12 +53,48 @@ _COMPLEX_HINTS = (
 
 
 def _keywords(text: str) -> list[str]:
-    return [w.lower() for w in _WORD.findall(text) if w.lower() not in _STOP and len(w) > 1]
+    # Stems, matched as substrings: "revenues" is asked, "Total revenue" is
+    # printed, and both contain "revenue".
+    return [stem(w.lower()) for w in _WORD.findall(text) if w.lower() not in _STOP and len(w) > 1]
 
 
 def _sentences(text: str) -> list[str]:
     parts = re.split(r"(?<=[.;:])\s+|\n+", text)
     return [p.strip() for p in parts if p.strip()]
+
+
+# A figure as a claim states it: grouped thousands, a decimal, or four or more
+# digits. Years are dates rather than figures, and short counts are everywhere.
+_FIGURE = re.compile(r"(?<![\d.,])(?:\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+\.\d+|\d{4,})")
+
+
+def figures_missing(claim: str, page_text: str) -> list[str]:
+    """Figures a claim states that its cited page does not print.
+
+    A claim that "net revenue was $52,853 million" cannot be supported by a
+    page without 52,853 on it, whatever a model says. When several claims
+    read alike, a batched verifier can attach the right verdict to the wrong
+    one; this check cannot, so a footnote never opens on a page (an auditor's
+    report, say) that lacks the number it is cited for.
+    """
+    page = re.sub(r"(?<=\d),(?=\d{3}(?!\d))", "", page_text or "")     # 52,853 -> 52853
+    missing = []
+    for f in _FIGURE.findall(claim or ""):
+        bare = f.replace(",", "")
+        if "." not in bare and len(bare) == 4 and 1900 <= int(bare) <= 2100:
+            continue
+        if not re.search(rf"(?<![\d.]){re.escape(bare)}(?!\d)", page):
+            missing.append(f)
+    return missing
+
+
+_YEAR_IN = re.compile(r"\b(?:19|20)\d{2}\b")
+_AMOUNT = re.compile(r"\d{1,3}(?:,\d{3})+|\d+\.\d+")
+
+
+def _is_column_header(line: str) -> bool:
+    """'Years Ended (In Millions) Dec 27, 2025 Dec 28, 2024 Dec 30, 2023'"""
+    return len(_YEAR_IN.findall(line)) >= 2 and not _AMOUNT.search(line)
 
 
 def _score_line(line: str, kws: list[str]) -> float:
@@ -245,7 +283,7 @@ class StubProvider:
             entity.update(_doc_entity_terms(p.doc_id))
         focus = set()
         for k in _keywords(question):
-            if k in _GENERIC_FINANCE or _YEAR.match(k) or k.isdigit():
+            if k in _GENERIC_STEMS or _YEAR.match(k) or k.isdigit():
                 continue
             if k in entity:
                 continue
@@ -264,7 +302,12 @@ class StubProvider:
         seen: set[str] = set()
         for page in pages:
             corpus = page.text or " ".join(r.text for r in page.regions)
+            header, since = "", 99
             for line in _sentences(corpus):
+                since += 1
+                if _is_column_header(line):
+                    header, since = line, 0
+                    continue
                 # Keep only lines that carry enough of what was actually asked.
                 # Hitting one background term (the company's own name) is not
                 # evidence of anything.
@@ -285,8 +328,15 @@ class StubProvider:
                         if r.bbox is bbox:
                             region_id = r.region_id
                             break
+                # A table row means nothing without its columns: "Total net
+                # revenue $ 52,853 $ 53,101 $ 54,228" says which year only
+                # with the header above it, and a reader shown the row alone
+                # rightly will not say.
+                text = line
+                if header and since <= 30 and len(_AMOUNT.findall(line)) >= 2:
+                    text = f"{line} (columns: {header})"
                 claims.append(Claim(
-                    text=line,
+                    text=text,
                     citations=[Citation(
                         doc_id=page.doc_id, page_number=page.page_number,
                         bbox=bbox, region_id=region_id, snippet=line[:240],
@@ -446,6 +496,9 @@ class ClaudeProvider:
             return False, 0.0, "no citation"
         page = next((p for p in pages if p.doc_id == cit.doc_id
                      and p.page_number == cit.page_number), None)
+        missing = figures_missing(claim.text, page.text) if page else []
+        if missing:
+            return False, 0.1, f"{missing[0]} is not printed on the cited page"
         images = [page.image_path] if page and page.image_path else []
         system = (
             "You are a strict verifier. Decide whether the claim is BOTH directly "

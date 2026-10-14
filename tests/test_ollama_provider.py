@@ -213,3 +213,33 @@ def test_a_verdict_that_agrees_but_echoes_a_zero_confidence_still_counts():
     [(ok, conf, _)] = _provider(FakeSession(verdict)).verify_claims(
         "What was revenue?", [c], _pages(), CostMeter())
     assert ok and conf > 0.5, "a zero would send a grounded answer round the retry loop"
+
+
+def test_a_claim_is_never_verified_against_a_page_without_its_figure():
+    from insightledger.llm.provider import figures_missing
+    page = "Total net revenue $ 52,853 $ 53,101 $ 54,228 for fiscal 2025"
+    assert figures_missing("Net revenue in 2025 was $52,853 million.", page) == []
+    assert figures_missing("Net revenue was $52.9 billion.", page) == ["52.9"], "rounded is computed"
+    assert figures_missing("Shares outstanding: 14,776,353,000", "14,776,353,000 shares") == []
+    assert figures_missing("Revenue was $152,853 million", page) == ["152,853"], "no partial matches"
+    # the auditor's report quotes revenue but prints no figure: the verifier
+    # model is never asked, and the claim cannot reach the answer
+    auditor = RetrievedPage(doc_id=DOC, page_number=88, score=1.0,
+                            text="Report of Independent Registered Public Accounting Firm. Revenue recognition.")
+    c = Claim(text="Net revenue in 2025 was $52,853 million.",
+              citations=[Citation(doc_id=DOC, page_number=88, snippet="Revenue recognition.")])
+    [(ok, _, note)] = _provider(FakeSession()).verify_claims("Net revenue?", [c], [auditor], CostMeter())
+    assert not ok and "52,853" in note
+
+
+def test_a_table_row_is_read_with_its_column_header():
+    from insightledger.llm.provider import StubProvider
+    text = ("Net revenue by region was as follows:\n"
+            "Years Ended (In Millions) Dec 27, 2025 Dec 28, 2024 Dec 30, 2023\n"
+            "United States $ 15,757 $ 12,994 $ 13,958\n"
+            "Total net revenue $ 52,853 $ 53,101 $ 54,228")
+    page = RetrievedPage(doc_id="INTC-10-K-2026-01-23", page_number=105, score=1.0, text=text)
+    claims = StubProvider().extract_claims("What was Intel's total net revenue in 2025?", [page], CostMeter())
+    row = next(c for c in claims if "52,853" in c.text)
+    assert "Dec 27, 2025" in row.text and "(In Millions)" in row.text, row.text
+    assert row.citations[0].snippet.startswith("Total net revenue"), "the quote stays the printed row"

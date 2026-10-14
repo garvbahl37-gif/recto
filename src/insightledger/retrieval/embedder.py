@@ -20,6 +20,7 @@ import numpy as np
 
 from ..config import Settings, get_settings
 from ..schemas import Page
+from ..words import singular
 
 # Hashed stub vectors only need to tell "the same word" from "a different
 # word": an exact match scores 1.0, the best random overlap across a page about
@@ -32,17 +33,7 @@ _TOK = re.compile(r"[A-Za-z0-9%$.\-]+")
 def _lemma(tok: str) -> str:
     """A word's singular: "revenues" and "revenue" must be the same token, or a
     question in the plural never finds GE's "Total revenue $ 45,855"."""
-    if not tok.isalpha() or len(tok) <= 3:
-        return tok
-    if len(tok) > 4 and tok.endswith("ies"):
-        return tok[:-3] + "y"                               # liabilities
-    if tok.endswith("ss") or tok.endswith(("us", "is")):
-        return tok                                          # loss, status, basis
-    if tok.endswith("es") and tok[:-2].endswith(("ss", "x", "ch", "sh")):
-        return tok[:-2]                                     # losses, taxes
-    if tok.endswith("s"):
-        return tok[:-1]                                     # revenues, sales
-    return tok
+    return singular(tok)
 
 
 def best_per_token(query: np.ndarray, doc: np.ndarray) -> np.ndarray:

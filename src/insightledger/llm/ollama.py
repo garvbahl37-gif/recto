@@ -29,7 +29,7 @@ from typing import Any, Optional
 from ..config import Settings, get_settings
 from ..observability.cost import CostMeter
 from ..schemas import Citation, Claim, Difficulty, RetrievedPage
-from .provider import StubProvider
+from .provider import StubProvider, figures_missing
 
 _FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
 # Same citation shape the frontend parses: [NVDA-10-K-2026-02-25 p.50]
@@ -241,6 +241,8 @@ class OllamaProvider:
                 results[i] = (False, 0.0, "cited page not in the retrieved set")
             elif not quote_on_page(cit.snippet or "", page.text):
                 results[i] = (False, 0.1, "quoted text not found on the cited page")
+            elif missing := figures_missing(c.text, page.text):
+                results[i] = (False, 0.1, f"{missing[0]} is not printed on the cited page")
             else:
                 ask.append(i)
         if not ask:
