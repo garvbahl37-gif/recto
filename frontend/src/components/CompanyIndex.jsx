@@ -177,7 +177,7 @@ export function RectoIndex({ filings, onScope, onPick, onClose }) {
             </div>
             {pagesOf(shown).map((block, i) => (
               <div className="ix-page" key={i}>
-                {block.length > 1 && (
+                {!found && block.length > 1 && (
                   <p className="ix-guide" aria-hidden>
                     <span>{tidyName(block[0].name)}</span><span>{tidyName(block[block.length - 1].name)}</span>
                   </p>
