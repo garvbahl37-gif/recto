@@ -68,12 +68,20 @@ def test_extracts_claims_from_fenced_json():
     assert "165,218" in claims[0].citations[0].snippet
 
 
+def _only_verbatim(claims):
+    """Whatever survives must quote the page exactly — the model's invention
+    is gone, though the deterministic reader may propose real lines."""
+    from insightledger.llm.ollama import quote_on_page
+    return all(quote_on_page(c.citations[0].snippet, PAGE_TEXT) for c in claims)
+
+
 def test_drops_claims_citing_pages_the_model_never_saw():
     body = {"claims": [{"text": "Revenue was $1.", "doc_id": DOC, "page": 999,
                         "quote": "Revenue $ 165,218"}]}
     claims = _provider(FakeSession(json.dumps(body))).extract_claims(
         "What was revenue?", _pages(), CostMeter())
-    assert claims == []
+    assert all(c.text != "Revenue was $1." for c in claims)
+    assert all(c.citations[0].page_number == 50 for c in claims) and _only_verbatim(claims)
 
 
 def test_drops_claims_whose_quote_is_not_on_the_page():
@@ -81,7 +89,7 @@ def test_drops_claims_whose_quote_is_not_on_the_page():
                         "quote": "Revenue $ 999,999"}]}
     claims = _provider(FakeSession(json.dumps(body))).extract_claims(
         "What was revenue?", _pages(), CostMeter())
-    assert claims == []
+    assert all("999" not in c.text for c in claims) and _only_verbatim(claims)
 
 
 def _claim(text="NVIDIA's revenue was $165,218 million in fiscal 2026.",
@@ -149,3 +157,31 @@ def test_a_rate_limited_call_is_retried_once():
     sess = Flaky(json.dumps(body))
     claims = _provider(sess).extract_claims("What was revenue?", _pages(), CostMeter())
     assert len(sess.sent) == 2 and len(claims) == 1
+
+
+def test_one_lead_sentence_then_cited_bullets_only():
+    text = (f"Meta's advertising revenue was $196,175 million in 2025.\n"
+            f"- $196,175 million in 2025. [{DOC} p.50]\n"
+            f"Meta's advertising revenue was $160,633 million in 2024.\n"
+            f"- $160,633 million in 2024. [{DOC} p.50]")
+    c = _claim(); c.verified = True
+    out, _ = _provider(FakeSession(text)).synthesize("What was revenue?", [c], CostMeter())
+    lines = out.splitlines()
+    assert sum(1 for ln in lines if not ln.startswith("-")) == 1, out
+    assert sum(1 for ln in lines if ln.startswith("-")) == 2
+
+
+def test_a_single_cited_sentence_becomes_a_bullet():
+    c = _claim(); c.verified = True
+    out, _ = _provider(FakeSession(f"Revenue was $165,218 million. [{DOC} p.50]")).synthesize(
+        "What was revenue?", [c], CostMeter())
+    assert out.startswith("- ") and f"[{DOC} p.50]" in out
+
+
+def test_an_empty_model_read_falls_back_to_verbatim_candidates():
+    """The model sometimes returns no claims for a page that answers the
+    question; the deterministic reader proposes the verbatim line instead."""
+    claims = _provider(FakeSession('{"claims": []}')).extract_claims(
+        "What was revenue in fiscal 2026?", _pages(), CostMeter())
+    assert claims and "165,218" in claims[0].text
+    assert claims[0].verified is None, "candidates are unverified until the verifier agrees"

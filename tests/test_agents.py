@@ -38,3 +38,38 @@ def test_lookup_uses_cheap_routing_signal():
                          doc_ids=["ACME-10K-2024"])
     assert "4,820" in ans.text
     assert ans.difficulty == Difficulty.simple
+
+
+def test_a_retry_reads_only_pages_it_has_not_read():
+    """Widening retrieval used to re-read every page, including the ones the
+    first pass had just read, roughly doubling the time an abstention took."""
+    from insightledger.observability.cost import CostMeter
+    from insightledger.llm import StubProvider
+
+    seen = []
+
+    class Spy(StubProvider):
+        def extract_claims(self, question, pages, meter):
+            seen.append([(p.doc_id, p.page_number) for p in pages])
+            return []                      # nothing found: forces the retry
+
+    ensure_sample_index(force=True)
+    Orchestrator(provider=Spy()).answer("What was ACME's CEO total compensation in 2024?",
+                                        doc_ids=["ACME-10K-2024"])
+    assert len(seen) == 2, seen
+    assert not set(seen[0]) & set(seen[1]), "the retry re-read pages it had already read"
+
+
+def test_langgraph_retries_once_without_hitting_the_recursion_limit():
+    """decide() used to bump the retry counter inside a conditional edge.
+    LangGraph does not persist state changes made in an edge, so the counter
+    never moved: every low-confidence question looped until the recursion
+    limit, then crashed into the linear fallback and started over."""
+    from insightledger.observability.cost import CostMeter
+    from insightledger.observability.tracing import get_tracer
+    ensure_sample_index(force=True)
+    o = _orch()
+    st = o._initial_state("What was ACME's CEO total compensation in 2024?", None,
+                          ["ACME-10K-2024"], CostMeter(), get_tracer())
+    out = o._run_langgraph(st)          # must not raise GraphRecursionError
+    assert out["retries"] == 1

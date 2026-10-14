@@ -40,7 +40,10 @@ log = logging.getLogger("insightledger.llm.ollama")
 _RETRYABLE = {429, 500, 502, 503, 504}
 
 _PAGE_CHARS = 3500      # per page sent to the extractor
-_VERIFY_CHARS = 2500    # per cited page sent to the verifier
+# The verifier sees the whole cited page. At 2,500 characters it was shown a
+# truncated page, could not find a quote sitting lower down, and rejected a
+# claim the deterministic quote check had already proven was on the page.
+_VERIFY_CHARS = 6000
 
 
 def _squash(text: str) -> str:
@@ -175,6 +178,9 @@ class OllamaProvider:
         )
         user = f"Question: {question}\n\nPages:\n{context}\n\nJSON only."
         try:
+            # Medium effort even for lookups: at low effort gpt-oss sometimes
+            # returned no claims for a page that plainly answered the question
+            # (Meta's advertising revenue), and the pipeline then abstained.
             raw = self._chat(self._model_for(question), system, user, meter,
                              max_tokens=2500, effort="medium")
             data = _parse_json(raw)
@@ -208,6 +214,15 @@ class OllamaProvider:
                                     bbox=bbox, region_id=region_id, snippet=quote[:240])],
                 confidence=0.8,
             ))
+        if not claims:
+            # A second, deterministic reader. Even at temperature 0 the model
+            # occasionally returns nothing for a page that plainly answers the
+            # question. The stub proposes verbatim lines instead; they are
+            # candidates only, and the model verifier must still agree with
+            # each one before it can reach an answer.
+            claims = self.stub.extract_claims(question, pages, meter)
+            if claims:
+                log.info("model found no claims; checking %d verbatim candidates", len(claims))
         return claims
 
     def verify_claims(self, question: str, claims: list[Claim],
@@ -237,11 +252,13 @@ class OllamaProvider:
             f'{i}. "{claims[i].text}" — cites [{claims[i].citations[0].doc_id} '
             f'p.{claims[i].citations[0].page_number}]' for i in ask)
         system = (
-            "You are a strict verifier for answers drawn from SEC filings. For each "
-            "claim decide two things separately: supported — the cited page states "
-            "it, with matching figures, periods and units; responsive — it helps "
-            "answer the question. A true statement that does not address the "
-            "question is not responsive. Default to false when uncertain. Respond "
+            "You are a strict verifier for answers drawn from SEC filings. Judge each "
+            "claim ONLY against the page it cites; never support a claim with another "
+            "page, because its footnote will point to the page it cites. For each claim "
+            "decide two things separately: supported — the cited page states it, with "
+            "matching figures, periods and units; responsive — it helps answer the "
+            "question. A true statement that does not address the question is not "
+            "responsive. Default to false when uncertain. Respond "
             'with JSON only: {"verdicts":[{"i":0,"supported":true,"responsive":true,'
             '"confidence":0.0,"note":"..."}]}'
         )
@@ -313,19 +330,26 @@ class OllamaProvider:
             key = (m.group(1), int(m.group(2)))
             return f"[{key[0]} p.{key[1]}]" if key in allowed else ""
 
-        lines: list[str] = []
+        lede: Optional[str] = None
+        bullets: list[str] = []
         for line in raw.splitlines():
             line = line.strip().replace("**", "")
             if not line:
                 continue
-            if line[:1] in "*•":
+            if line[:1] in "*\u2022":
                 line = "- " + line[1:].strip()
             cleaned = _CITE.sub(keep, line).rstrip()
-            # every statement must stay traceable; drop one left uncited
-            if cleaned.startswith("-") and not _CITE.search(cleaned):
-                continue
-            lines.append(cleaned)
-        if not any(ln.startswith("-") for ln in lines):
+            if cleaned.startswith("-"):
+                # every statement must stay traceable; drop one left uncited
+                if _CITE.search(cleaned):
+                    bullets.append(cleaned)
+            elif lede is None and not bullets:
+                lede = cleaned
+            # Any other unbulleted line is a statement without a citation —
+            # models like to restate each bullet as its own lead sentence.
+        if not bullets and lede and _CITE.search(lede):
+            bullets, lede = ["- " + lede], None      # one cited sentence is an answer
+        if not bullets:
             log.warning("synthesis kept no cited lines; using the stub's wording")
             return self.stub.synthesize(question, claims, meter)
-        return "\n".join(lines), model
+        return "\n".join(([lede] if lede else []) + bullets), model

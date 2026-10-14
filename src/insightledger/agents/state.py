@@ -19,6 +19,7 @@ class ILState(TypedDict, total=False):
     difficulty: Difficulty
     retrieved: list[RetrievedPage]
     claims: list[Claim]
+    read: list[str]          # "doc#page" already extracted, so a retry skips them
     verified_confidence: float
     retries: int
 

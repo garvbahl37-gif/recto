@@ -2,7 +2,7 @@ r"""Multi-agent orchestration.
 
 Graph shape (a real cycle — this is what separates it from a linear chain):
 
-    router -> retriever -> extractor -> verifier --(low confidence)--> retriever
+    router -> retriever -> extractor -> verifier --(low confidence)--> widen -> retriever
                                               \--(confident/exhausted)--> synthesizer
 
 - router     : assess difficulty, size retrieval (complex questions fan wider).
@@ -60,8 +60,19 @@ class Orchestrator:
             state["difficulty"] = difficulty
             state["top_k"] = k
             state.setdefault("retries", 0)
-            state["log"].append(f"router: difficulty={difficulty.value} top_k={k}")
-        _emit(state, "router", difficulty=difficulty.value, top_k=k)
+            # A question that names a company reads that company's filing:
+            # every 10-K prints "Net income", so an open scope returns the
+            # right line item from the wrong company.
+            scoped: list[str] = []
+            if not state.get("doc_ids"):
+                from ..knowledge import load_registry
+                from .entities import companies_in
+                scoped = companies_in(state["question"], load_registry(self.s))
+                if scoped:
+                    state["doc_ids"] = scoped
+            state["log"].append(f"router: difficulty={difficulty.value} top_k={k}"
+                                + (f" scoped={scoped}" if scoped else ""))
+        _emit(state, "router", difficulty=difficulty.value, top_k=k, scoped=scoped)
         return state
 
     def retrieve(self, state: ILState) -> ILState:
@@ -81,31 +92,36 @@ class Orchestrator:
     def extract(self, state: ILState) -> ILState:
         tracer: Tracer = state["tracer"]
         with tracer.span("extractor"):
-            claims = self.provider.extract_claims(
-                state["question"], state["retrieved"], state["meter"])
-            state["claims"] = claims
-            state["log"].append(f"extractor: {len(claims)} candidate claims")
-        _emit(state, "extractor", claims=len(claims))
+            # On a retry the retriever returns a wider list that starts with
+            # the pages already read. Read only the new ones and keep what the
+            # first pass found; re-reading everything doubled an abstention.
+            read = set(state.get("read") or [])
+            fresh = [p for p in state["retrieved"] if f"{p.doc_id}#{p.page_number}" not in read]
+            new = self.provider.extract_claims(
+                state["question"], fresh, state["meter"]) if fresh else []
+            state["claims"] = list(state.get("claims") or []) + new
+            state["read"] = sorted(read | {f"{p.doc_id}#{p.page_number}" for p in fresh})
+            state["log"].append(f"extractor: {len(new)} new claims from {len(fresh)} new pages")
+        _emit(state, "extractor", claims=len(state["claims"]), new=len(new), pages=len(fresh))
         return state
 
     def verify(self, state: ILState) -> ILState:
         tracer: Tracer = state["tracer"]
         with tracer.span("verifier"):
-            confs: list[float] = []
-            claims = state["claims"]
+            # Claims a previous pass already judged keep their verdicts.
+            pending = [c for c in state["claims"] if c.verified is None]
             batch = getattr(self.provider, "verify_claims", None)
-            if batch is not None and claims:
+            if batch is not None and pending:
                 # one model call for every claim, instead of one per claim
-                verdicts = batch(state["question"], claims, state["retrieved"], state["meter"])
+                verdicts = batch(state["question"], pending, state["retrieved"], state["meter"])
             else:
                 verdicts = [self.provider.verify_claim(
-                    state["question"], c, state["retrieved"], state["meter"]) for c in claims]
-            for claim, (ok, conf, note) in zip(claims, verdicts):
+                    state["question"], c, state["retrieved"], state["meter"]) for c in pending]
+            for claim, (ok, conf, note) in zip(pending, verdicts):
                 claim.verified = ok
                 claim.confidence = conf
                 claim.verifier_note = note
-                if ok:
-                    confs.append(conf)
+            confs = [c.confidence for c in state["claims"] if c.verified]
             state["verified_confidence"] = max(confs) if confs else 0.0
             n_ok = sum(1 for c in state["claims"] if c.verified)
             state["log"].append(
@@ -116,17 +132,25 @@ class Orchestrator:
         return state
 
     def decide(self, state: ILState) -> str:
-        """Conditional edge: retry retrieval or move to synthesis."""
+        """Conditional edge: widen the search or move to synthesis.
+
+        Must not change state. LangGraph does not persist changes made inside
+        an edge function, so when this used to bump the retry counter here the
+        counter never moved under LangGraph: every low-confidence question
+        looped until the recursion limit, crashed into the linear fallback and
+        started over. The bookkeeping lives in the `widen` node instead.
+        """
         good = state.get("verified_confidence", 0.0) >= state["min_confidence"]
         exhausted = state.get("retries", 0) >= state["max_retries"]
-        if good or exhausted:
-            return "synthesize"
+        return "synthesize" if (good or exhausted) else "widen"
+
+    def widen(self, state: ILState) -> ILState:
         state["retries"] = state.get("retries", 0) + 1
-        state["top_k"] = state["top_k"] + 3   # widen the net on retry
+        state["top_k"] = state["top_k"] + 3   # cast a wider net; only new pages are read
         state["log"].append(
             f"decision: retry #{state['retries']} (widen to top_k={state['top_k']})")
         _emit(state, "retry", attempt=state["retries"], top_k=state["top_k"])
-        return "retrieve"
+        return state
 
     def synthesize(self, state: ILState) -> ILState:
         tracer: Tracer = state["tracer"]
@@ -162,6 +186,7 @@ class Orchestrator:
             state = self.verify(state)
             if self.decide(state) == "synthesize":
                 break
+            state = self.widen(state)
         return self.synthesize(state)
 
     def _run_langgraph(self, state: ILState) -> ILState:
@@ -172,13 +197,15 @@ class Orchestrator:
         g.add_node("retriever", self.retrieve)
         g.add_node("extractor", self.extract)
         g.add_node("verifier", self.verify)
+        g.add_node("widen", self.widen)
         g.add_node("synthesizer", self.synthesize)
         g.add_edge(START, "router")
         g.add_edge("router", "retriever")
         g.add_edge("retriever", "extractor")
         g.add_edge("extractor", "verifier")
         g.add_conditional_edges("verifier", self.decide,
-                                {"retrieve": "retriever", "synthesize": "synthesizer"})
+                                {"widen": "widen", "synthesize": "synthesizer"})
+        g.add_edge("widen", "retriever")
         g.add_edge("synthesizer", END)
         app = g.compile()
         return app.invoke(state, config={"recursion_limit": 25})
